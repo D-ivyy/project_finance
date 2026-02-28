@@ -1,0 +1,157 @@
+@import "tailwindcss";
+
+/* ── Tailwind v4: class-based dark mode for next-themes ────────────────────── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Tailwind v4: register design tokens via @theme ────────────────────────── */
+@theme {
+  /* Typography */
+  --font-sans: var(--font-inter), "system-ui", "sans-serif";
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", "Menlo", "monospace";
+
+  /* Semantic colors — reference CSS custom props set below */
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-border: var(--color-border);
+  --color-border-subtle: var(--color-border-subtle);
+  --color-text: var(--color-text);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-accent: var(--color-accent);
+  --color-accent-subtle: var(--color-accent-subtle);
+  --color-warning: var(--color-warning);
+  --color-warning-subtle: var(--color-warning-subtle);
+  --color-breach: var(--color-breach);
+  --color-breach-subtle: var(--color-breach-subtle);
+  --color-safe: var(--color-safe);
+  --color-safe-subtle: var(--color-safe-subtle);
+}
+
+/* ── Light mode palette (default) ──────────────────────────────────────────── */
+:root {
+  --color-bg: #fafbfc;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f3f4f6;
+  --color-border: #d0d7de;
+  --color-border-subtle: #e8eaed;
+  --color-text: #1f2328;
+  --color-text-secondary: #656d76;
+  --color-text-muted: #9da3ab;
+  --color-accent: #0969da;
+  --color-accent-subtle: #ddf4ff;
+  --color-warning: #bf8700;
+  --color-warning-subtle: #fff8c5;
+  --color-breach: #cf222e;
+  --color-breach-subtle: #ffebe9;
+  --color-safe: #1a7f37;
+  --color-safe-subtle: #dafbe1;
+
+  --chart-paper: #ffffff;
+  --chart-plot: #fafbfc;
+  --chart-grid: #e8eaed;
+  --chart-font: #1f2328;
+  --chart-axis: #656d76;
+
+  --cov-deep-green: #d1f7dc;
+  --cov-light-green: #eaf9ee;
+  --cov-amber: #fff8c5;
+  --cov-red: #ffebe9;
+  --cov-deep-green-text: #1a7f37;
+  --cov-light-green-text: #2da44e;
+  --cov-amber-text: #9a6700;
+  --cov-red-text: #cf222e;
+}
+
+/* ── Dark mode palette ─────────────────────────────────────────────────────── */
+.dark {
+  --color-bg: #0d1117;
+  --color-surface: #161b22;
+  --color-surface-hover: #1c2128;
+  --color-border: #30363d;
+  --color-border-subtle: #21262d;
+  --color-text: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #6e7681;
+  --color-accent: #58a6ff;
+  --color-accent-subtle: #031d30;
+  --color-warning: #d29922;
+  --color-warning-subtle: #272115;
+  --color-breach: #f85149;
+  --color-breach-subtle: #2d0f0e;
+  --color-safe: #3fb950;
+  --color-safe-subtle: #0f2b14;
+
+  --chart-paper: #161b22;
+  --chart-plot: #0d1117;
+  --chart-grid: #21262d;
+  --chart-font: #e6edf3;
+  --chart-axis: #8b949e;
+
+  --cov-deep-green: #0f2b14;
+  --cov-light-green: #122118;
+  --cov-amber: #272115;
+  --cov-red: #2d0f0e;
+  --cov-deep-green-text: #3fb950;
+  --cov-light-green-text: #2da44e;
+  --cov-amber-text: #d29922;
+  --cov-red-text: #f85149;
+}
+
+/* ── Base styles ───────────────────────────────────────────────────────────── */
+html {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.tabular-nums {
+  font-feature-settings: "tnum";
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+.sidebar-scroll { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+
+/* ── Number input spinners ─────────────────────────────────────────────────── */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { opacity: 0.5; }
+
+/* ── Tooltip card ──────────────────────────────────────────────────────────── */
+.tooltip-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  max-width: 260px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* ── Plotly modebar styling ────────────────────────────────────────────────── */
+.plotly-chart .modebar { background: transparent !important; }
+.plotly-chart .modebar-btn path { fill: var(--color-text-secondary) !important; }
+
+/* ── Status badges ─────────────────────────────────────────────────────────── */
+.badge-green  { background: var(--color-safe-subtle);    color: var(--color-safe);    border: 1px solid var(--color-safe);    }
+.badge-amber  { background: var(--color-warning-subtle); color: var(--color-warning); border: 1px solid var(--color-warning); }
+.badge-red    { background: var(--color-breach-subtle);  color: var(--color-breach);  border: 1px solid var(--color-breach);  }
+
+/* ── Validation banners ────────────────────────────────────────────────────── */
+.validation-error   { background: var(--color-breach-subtle);  border: 1px solid var(--color-breach);  color: var(--color-breach);  border-radius: 6px; padding: 8px 12px; font-size: 12px; }
+.validation-warning { background: var(--color-warning-subtle); border: 1px solid var(--color-warning); color: var(--color-warning); border-radius: 6px; padding: 8px 12px; font-size: 12px; }
+.validation-info    { background: var(--color-accent-subtle);  border: 1px solid var(--color-accent);  color: var(--color-accent);  border-radius: 6px; padding: 8px 12px; font-size: 12px; }

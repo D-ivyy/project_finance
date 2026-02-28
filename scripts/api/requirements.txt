@@ -1,0 +1,18 @@
+# Project Finance Dashboard — Python API
+# Python 3.10+ required
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+python-multipart>=0.0.18
+
+# GCS access
+google-cloud-storage>=2.19.0
+
+# DuckDB for reading .duckdb files from GCS
+duckdb>=1.2.0
+
+# Data handling
+pandas>=2.2.0
+numpy>=2.0.0
+pydantic>=2.10.0

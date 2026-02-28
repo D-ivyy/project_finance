@@ -1,0 +1,42 @@
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Node / Next.js ─────────────────────────────────────────────────────────────
+scripts/dashboard/node_modules/
+scripts/dashboard/.next/
+scripts/dashboard/out/
+
+# ── IDE / OS ───────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ── Secrets / env ──────────────────────────────────────────────────────────────
+.env
+.env.local
+*.local
+
+# ── Docs extras (knowledge base, case studies, models — large reference files) ─
+docs/extra/
+
+# ── Cursor internal ───────────────────────────────────────────────────────────
+.cursor/
+
+# ── Temp files ─────────────────────────────────────────────────────────────────
+*.tmp
+*.duckdb
+*.duckdb.wal
