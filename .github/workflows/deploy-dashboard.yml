@@ -32,7 +32,7 @@ jobs:
     - name: Build and push Docker image
       run: |
         IMAGE_NAME="us-central1-docker.pkg.dev/modeling-nonprod-svc-db5x/infrasuremodelingdocker/project_finance:${{ github.sha }}"
-        docker build -f scripts/Dockerfile -t $IMAGE_NAME .
+        docker build -t $IMAGE_NAME scripts/
         docker push $IMAGE_NAME
 
     - name: Deploy to Cloud Run
