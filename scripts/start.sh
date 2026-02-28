@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-# Write GCS credentials from env var (for non-GCP platforms like Railway)
-if [ -n "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
-    echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/gcs-key.json
-    export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcs-key.json
-fi
-
 echo "[start] Starting FastAPI backend on :8001 ..."
 cd /app/api
 uvicorn main:app --host 0.0.0.0 --port 8001 --workers 1 &

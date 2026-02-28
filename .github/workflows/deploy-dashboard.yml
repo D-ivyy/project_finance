@@ -1,0 +1,50 @@
+name: Build and Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - dashboard-deploy
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: 'google-github-actions/auth@v3'
+      with:
+        project_id: 'modeling-nonprod-svc-db5x'
+        workload_identity_provider: 'projects/952205173464/locations/global/workloadIdentityPools/infrasure-gh-actions-pool/providers/github-repo-provider'
+
+    - name: Set up Cloud SDK
+      uses: 'google-github-actions/setup-gcloud@v3'
+
+    - name: Configure Docker for GAR
+      run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+    - name: Build and push Docker image
+      run: |
+        IMAGE_NAME="us-central1-docker.pkg.dev/modeling-nonprod-svc-db5x/infrasuremodelingdocker/project_finance:${{ github.sha }}"
+        docker build -f scripts/Dockerfile -t $IMAGE_NAME .
+        docker push $IMAGE_NAME
+
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy project-finance \
+          --image us-central1-docker.pkg.dev/modeling-nonprod-svc-db5x/infrasuremodelingdocker/project_finance:${{ github.sha }} \
+          --platform managed \
+          --region us-central1 \
+          --allow-unauthenticated \
+          --service-account project-service-account@modeling-nonprod-svc-db5x.iam.gserviceaccount.com \
+          --set-env-vars="DELIVERY_BUCKET=${{ secrets.DELIVERY_BUCKET }},ACCESS_KEY=${{ secrets.ACCESS_KEY }},SECRET=${{ secrets.SECRET }}"
+
+
+
+
