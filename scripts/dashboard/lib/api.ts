@@ -1,6 +1,8 @@
 import type { SiteData } from "@/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001";
+// In production (Cloud Run), API is on the same origin behind Nginx → use ""
+// In development, API runs on a separate port → use localhost:8001
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export async function fetchSites(): Promise<
   { asset_slug: string; asset_type: string; state: string }[]
