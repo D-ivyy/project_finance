@@ -47,12 +47,7 @@ export interface LoanConfig {
 }
 
 export interface DisplayConfig {
-  showP10: boolean;
-  showP25: boolean;
-  showP50: boolean;
-  showP75: boolean;
-  showP90: boolean;
-  selectedPercentile: SculptPercentile; // for Zone D bar chart
+  selectedPercentile: SculptPercentile; // controls Revenue/CFADS columns in ledger table
 }
 
 export interface FilterConfig {
@@ -94,6 +89,8 @@ export interface ComputedFinancials {
   loanSchedule: LoanScheduleRow[];
   // DSCR by year and percentile
   dscrTable: DscrRow[];
+  // Quarterly CFADS + LTM DSCR (from monthly paths)
+  quarterlyData: QuarterlyPoint[];
   // KPI summary
   minDscrValue: number;
   minDscrYear: number;
@@ -125,4 +122,16 @@ export interface MonthlyStats {
   p10: number;
   p90: number;
   mean: number;
+}
+
+// ── Quarterly CFADS + LTM DSCR (computed client-side) ────────────────────────
+
+export interface QuarterlyPoint {
+  year: number;             // 1 to tenorYears
+  quarter: number;          // 1-4
+  label: string;            // "Q1-Y1", "Q2-Y1", ...
+  revenue: PercentileMap;   // quarterly revenue percentiles ($)
+  cfads: PercentileMap;     // quarterly CFADS percentiles ($ = revenue - opex/4)
+  debtService: number;      // quarterly DS (annual DS / 4)
+  ltmDscr: PercentileMap;   // LTM DSCR at this test date (trailing 12-month)
 }

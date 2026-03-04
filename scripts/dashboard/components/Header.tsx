@@ -1,7 +1,7 @@
 "use client";
 
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Download, BarChart3 } from "lucide-react";
+import { BarChart3 } from "lucide-react";
 
 interface HeaderProps {
   siteName: string;
@@ -67,23 +67,9 @@ export function Header({ siteName, assetType, kind, market, pathCount }: HeaderP
         </span>
       </div>
 
-      {/* Right: theme toggle + export */}
+      {/* Right: theme toggle */}
       <div className="flex items-center gap-2">
         <ThemeToggle />
-        <button
-          title="Export PDF snapshot (coming soon)"
-          className="
-            flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs
-            border border-[var(--color-border)]
-            bg-[var(--color-surface)] text-[var(--color-text-secondary)]
-            hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text)]
-            transition-colors
-          "
-          disabled
-        >
-          <Download size={13} />
-          <span className="hidden sm:inline">Export PDF</span>
-        </button>
       </div>
     </header>
   );

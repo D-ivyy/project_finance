@@ -117,3 +117,53 @@ export function computeMonthlyStats(
     };
   });
 }
+
+/**
+ * Compute quarterly revenue percentiles from monthly paths.
+ *
+ * The monthly data contains one year of 12 months across N simulated paths.
+ * Each path has monthly_revenue_usd for months 1–12.
+ *
+ * For each path, quarters are summed:
+ *   Q1 = months 1+2+3, Q2 = 4+5+6, Q3 = 7+8+9, Q4 = 10+11+12
+ *
+ * Returns an array of 4 PercentileMaps (index 0 = Q1, ..., 3 = Q4).
+ * Returns null if monthly data is missing (hero chart falls back to annual).
+ */
+export function computeQuarterlyPercentiles(
+  monthlyPaths: MonthlyRevenuePath[]
+): PercentileMap[] | null {
+  if (monthlyPaths.length === 0) return null;
+
+  // Group by path_id → map of month → revenue
+  const byPath = new Map<number, Map<number, number>>();
+  for (const row of monthlyPaths) {
+    if (!byPath.has(row.path_id)) byPath.set(row.path_id, new Map());
+    byPath.get(row.path_id)!.set(row.month, row.monthly_revenue_usd);
+  }
+
+  // Quarter definitions: Q1=1-3, Q2=4-6, Q3=7-9, Q4=10-12
+  const quarterMonths = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9],
+    [10, 11, 12],
+  ];
+
+  // For each quarter, collect summed revenue across all paths
+  const quarterValues: number[][] = [[], [], [], []];
+
+  for (const [, monthMap] of byPath) {
+    for (let q = 0; q < 4; q++) {
+      const months = quarterMonths[q];
+      // Only include paths that have all 3 months for this quarter
+      const vals = months.map((m) => monthMap.get(m) ?? 0);
+      quarterValues[q].push(vals[0] + vals[1] + vals[2]);
+    }
+  }
+
+  // Check we have enough data
+  if (quarterValues[0].length === 0) return null;
+
+  return quarterValues.map((vals) => computePercentiles(vals));
+}

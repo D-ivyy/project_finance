@@ -2,7 +2,7 @@
 
 import type { ComputedFinancials } from "@/types";
 import { fmtDscr, fmtMillion } from "@/lib/api";
-import { TrendingUp, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { TrendingUp, CheckCircle, XCircle, Scale } from "lucide-react";
 
 interface KpiCardsProps {
   data: ComputedFinancials;
@@ -26,25 +26,21 @@ function KpiCard({
   const colorMap = {
     green: {
       border: "border-[var(--color-safe)]/40",
-      bg: "bg-[var(--color-safe-subtle)]",
       text: "text-[var(--color-safe)]",
       value: "text-[var(--color-safe)]",
     },
     amber: {
       border: "border-[var(--color-warning)]/40",
-      bg: "bg-[var(--color-warning-subtle)]",
       text: "text-[var(--color-warning)]",
       value: "text-[var(--color-warning)]",
     },
     red: {
       border: "border-[var(--color-breach)]/40",
-      bg: "bg-[var(--color-breach-subtle)]",
       text: "text-[var(--color-breach)]",
       value: "text-[var(--color-breach)]",
     },
     blue: {
       border: "border-[var(--color-accent)]/40",
-      bg: "bg-[var(--color-accent-subtle)]",
       text: "text-[var(--color-accent)]",
       value: "text-[var(--color-text)]",
     },
@@ -78,14 +74,21 @@ function KpiCard({
 }
 
 export function KpiCards({ data }: KpiCardsProps) {
-  const { minDscrValue, minDscrYear, minDscrPercentile, minDscr, bindingDscr,
-    debtCfadsRatio, covenantStatus, breachCount, dscrTable } = data;
+  const {
+    minDscrValue,
+    minDscrYear,
+    minDscrPercentile,
+    minDscr,
+    debtCfadsRatio,
+    covenantStatus,
+    breachCount,
+    dscrTable,
+  } = data;
 
   const headroom = minDscrValue - minDscr;
   const minDscrColor =
     headroom > 0.5 ? "green" : headroom > 0.1 ? "amber" : "red";
 
-  // Debt service Year 1
   const year1Ds = dscrTable[0]?.debtService ?? 0;
 
   return (
@@ -97,50 +100,36 @@ export function KpiCards({ data }: KpiCardsProps) {
         sub={`${minDscrPercentile}, Year ${minDscrYear}`}
         detail={
           headroom >= 0
-            ? `▲ +${headroom.toFixed(2)}x vs covenant ${fmtDscr(minDscr)}`
-            : `▼ ${headroom.toFixed(2)}x BELOW covenant ${fmtDscr(minDscr)}`
+            ? `▲ +${headroom.toFixed(2)}x above covenant ${fmtDscr(minDscr)}`
+            : `▼ ${Math.abs(headroom).toFixed(2)}x BELOW covenant ${fmtDscr(minDscr)}`
         }
         color={minDscrColor}
         icon={<TrendingUp size={14} />}
       />
 
-      {/* Card 2: Binding Case */}
-      <KpiCard
-        label="Binding Case"
-        value={fmtDscr(bindingDscr)}
-        sub={`${minDscrPercentile}, Year ${minDscrYear}`}
-        detail={
-          bindingDscr >= minDscr
-            ? `Clears ${fmtDscr(minDscr)} covenant — headroom OK`
-            : `Below ${fmtDscr(minDscr)} covenant — BREACH`
-        }
-        color={bindingDscr >= minDscr ? "green" : "red"}
-        icon={<AlertTriangle size={14} />}
-      />
-
-      {/* Card 3: Debt / CFADS */}
+      {/* Card 2: Debt / CFADS (leverage) */}
       <KpiCard
         label="Debt / CFADS"
         value={`${debtCfadsRatio.toFixed(2)}x`}
         sub="Year 1 P50 (leverage)"
         detail={`Yr 1 DS: ${fmtMillion(year1Ds)}/yr`}
         color="blue"
-        icon={<TrendingUp size={14} />}
+        icon={<Scale size={14} />}
       />
 
-      {/* Card 4: Covenant Status */}
+      {/* Card 3: Covenant Status */}
       <KpiCard
         label="Covenant Status"
         value={covenantStatus === "pass" ? "ALL PASS ✓" : `${breachCount} BREACH${breachCount !== 1 ? "ES" : ""}`}
         sub={
           covenantStatus === "pass"
-            ? `${dscrTable.length} yrs × 5 percentiles`
-            : `Min DSCR threshold: ${fmtDscr(minDscr)}`
+            ? `${dscrTable.length} years · all percentiles clear ${fmtDscr(minDscr)}`
+            : `${breachCount} cell${breachCount !== 1 ? "s" : ""} below ${fmtDscr(minDscr)}`
         }
         detail={
           covenantStatus === "pass"
             ? "No covenant violations"
-            : `${breachCount} cell${breachCount !== 1 ? "s" : ""} below ${fmtDscr(minDscr)}`
+            : `Min DSCR threshold: ${fmtDscr(minDscr)}`
         }
         color={covenantStatus === "pass" ? "green" : "red"}
         icon={
