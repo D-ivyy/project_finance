@@ -230,23 +230,6 @@ export function ConfigSidebar({
     { value: "sculpted", label: "Sculpted" },
   ];
 
-  const PERCENTILE_COLORS = {
-    P10: "var(--color-breach)",
-    P25: "var(--color-warning)",
-    P50: "var(--color-accent)",
-    P75: "var(--color-safe)",
-    P90: "var(--color-text-secondary)",
-  };
-
-  const togglePercentile = (key: keyof DisplayConfig) => {
-    const current = display[key] as boolean;
-    // Prevent unchecking the last one
-    const activeCount = (["showP10","showP25","showP50","showP75","showP90"] as const)
-      .filter((k) => display[k]).length;
-    if (current && activeCount <= 1) return;
-    onDisplayChange({ ...display, [key]: !current });
-  };
-
   return (
     <aside
       className="
@@ -445,53 +428,17 @@ export function ConfigSidebar({
         </div>
       )}
 
-      <Divider label="Display" />
-
-      <div className="space-y-1">
-        {(["P10", "P25", "P50", "P75", "P90"] as SculptPercentile[]).map((p) => {
-          const key = `show${p}` as keyof DisplayConfig;
-          const active = display[key] as boolean;
-          return (
-            <label
-              key={p}
-              className="flex items-center gap-2 cursor-pointer text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
-            >
-              <input
-                type="checkbox"
-                checked={active}
-                onChange={() => togglePercentile(key)}
-                className="accent-[var(--color-accent)] w-3 h-3"
-              />
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: PERCENTILE_COLORS[p] }}
-              />
-              {p}
-            </label>
-          );
-        })}
-      </div>
-
-      <Divider label="Zone D" />
-      <Field label="Show percentile">
+      <Divider label="Ledger" />
+      <Field
+        label="Revenue / CFADS percentile"
+        tooltip="Controls which percentile is used for the Revenue and CFADS columns in the ledger table. DSCR columns always show P10/P50/P90."
+      >
         <Select
           value={display.selectedPercentile}
           onChange={(v) => onDisplayChange({ ...display, selectedPercentile: v })}
           options={PERCENTILE_OPTIONS}
         />
       </Field>
-
-      <Divider label="Model Version" />
-      <div className="space-y-1">
-        <label className="flex items-center gap-2 text-xs">
-          <input type="radio" checked readOnly className="accent-[var(--color-accent)]" />
-          <span className="text-[var(--color-text)]">Gen 1</span>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-          <input type="radio" disabled className="opacity-40" />
-          <span>Gen 2 (coming soon)</span>
-        </label>
-      </div>
 
       <div className="h-4" />
     </aside>

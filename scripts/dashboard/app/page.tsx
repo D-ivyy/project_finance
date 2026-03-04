@@ -3,21 +3,21 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import type {
   SiteData, LoanConfig, DisplayConfig, FilterConfig, AssetMeta,
-  ComputedFinancials, PercentileKey,
+  ComputedFinancials,
 } from "@/types";
 import { fetchSiteData, fetchSites } from "@/lib/api";
 import { computeFinancials } from "@/lib/finance";
-import { computeMonthlyStats } from "@/lib/stats";
+import { computeMonthlyStats, computeQuarterlyPercentiles } from "@/lib/stats";
 import { validateLoanConfig, validateCrossControls, hasHardError } from "@/lib/validation";
 
 import { Header } from "@/components/Header";
 import { KpiCards } from "@/components/KpiCards";
-import { DscrChart } from "@/components/DscrChart";
+import { HeroChart } from "@/components/HeroChart";
+import { LedgerTable } from "@/components/LedgerTable";
+import { CollapsiblePanel } from "@/components/CollapsiblePanel";
 import { RevenueDistChart } from "@/components/RevenueDistChart";
-import { CfadsDsChart } from "@/components/CfadsDsChart";
 import { MonthlyChart } from "@/components/MonthlyChart";
 import { ConfigSidebar } from "@/components/ConfigSidebar";
-import { CovenantScorecard } from "@/components/CovenantScorecard";
 import { AssumptionBanner } from "@/components/AssumptionBanner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
@@ -33,11 +33,6 @@ const DEFAULT_LOAN: LoanConfig = {
 };
 
 const DEFAULT_DISPLAY: DisplayConfig = {
-  showP10: true,
-  showP25: true,
-  showP50: true,
-  showP75: true,
-  showP90: true,
   selectedPercentile: "P50",
 };
 
@@ -45,16 +40,6 @@ const DEFAULT_FILTER: FilterConfig = {
   kind: "hub",
   market: "da",
 };
-
-// ── Section label ─────────────────────────────────────────────────────────────
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="text-xs font-semibold uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
-      {children}
-    </div>
-  );
-}
 
 // ── Panel wrapper ─────────────────────────────────────────────────────────────
 
@@ -72,7 +57,17 @@ function Panel({ children, className = "" }: { children: React.ReactNode; classN
   );
 }
 
-// ── Loading spinner ───────────────────────────────────────────────────────────
+// ── Section label ─────────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="text-xs font-semibold uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+      {children}
+    </div>
+  );
+}
+
+// ── Loading overlay ───────────────────────────────────────────────────────────
 
 function LoadingOverlay({ message }: { message: string }) {
   return (
@@ -109,6 +104,16 @@ function ValidationBanner({
         </div>
       ))}
     </div>
+  );
+}
+
+// ── Skeleton placeholder ──────────────────────────────────────────────────────
+
+function Skeleton({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`animate-pulse rounded bg-[var(--color-bg)] ${className}`}
+    />
   );
 }
 
@@ -152,7 +157,6 @@ export default function DashboardPage() {
       try {
         const data = await fetchSiteData(slug, kind, market);
         setSiteData(data);
-        // Reset overrides when site changes
         setOpexOverride(null);
         setMinDscrOverride(null);
       } catch (e: unknown) {
@@ -185,22 +189,27 @@ export default function DashboardPage() {
 
   const validationMsgs = useMemo(() => {
     if (!asset) return [];
-    const pctCfads = null; // will be populated after compute — use null for first pass
-    return validateLoanConfig(loan, pctCfads, opexOverride ?? 0);
+    return validateLoanConfig(loan, null, opexOverride ?? 0);
   }, [loan, opexOverride, asset]);
 
   const isBlocked = hasHardError(validationMsgs);
+
+  // ── Quarterly percentiles from monthly data ──────────────────────────────────
+  const quarterlyRevPcts = useMemo(
+    () => computeQuarterlyPercentiles(siteData?.monthly_paths ?? []),
+    [siteData?.monthly_paths]
+  );
 
   // ── Main computation ──────────────────────────────────────────────────────────
   const computed: ComputedFinancials | null = useMemo(() => {
     if (!asset || simulatedRevenue.length === 0 || isBlocked) return null;
     try {
-      return computeFinancials(simulatedRevenue, asset, loan, opexOverride, minDscrOverride);
+      return computeFinancials(simulatedRevenue, asset, loan, opexOverride, minDscrOverride, quarterlyRevPcts);
     } catch (e) {
       console.error("Computation error:", e);
       return null;
     }
-  }, [asset, simulatedRevenue, loan, opexOverride, minDscrOverride, isBlocked]);
+  }, [asset, simulatedRevenue, loan, opexOverride, minDscrOverride, isBlocked, quarterlyRevPcts]);
 
   // ── Cross-control validation (post-compute) ───────────────────────────────────
   const crossMsgs = useMemo(() => {
@@ -221,15 +230,9 @@ export default function DashboardPage() {
     [siteData?.monthly_paths]
   );
 
-  // ── Path count ────────────────────────────────────────────────────────────────
   const pathCount = simulatedRevenue.length;
 
-  const handleSiteChange = (slug: string) => {
-    setSelectedSite(slug);
-  };
-
-  // ── Render ────────────────────────────────────────────────────────────────────
-
+  // ── Error state ───────────────────────────────────────────────────────────────
   if (error) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -263,8 +266,10 @@ uvicorn main:app --port 8001 --reload`}
     );
   }
 
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[var(--color-bg)]">
+
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <Header
         siteName={selectedSite || "Loading…"}
@@ -274,13 +279,14 @@ uvicorn main:app --port 8001 --reload`}
         pathCount={pathCount}
       />
 
-      {/* ── Main 3-column layout ─────────────────────────────────────────────── */}
+      {/* ── 2-column layout ──────────────────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
-        {/* Left sidebar */}
+
+        {/* Left sidebar — unchanged */}
         <ConfigSidebar
           sites={sites}
           selectedSite={selectedSite}
-          onSiteChange={handleSiteChange}
+          onSiteChange={setSelectedSite}
           asset={asset}
           filter={filter}
           onFilterChange={setFilter}
@@ -297,91 +303,94 @@ uvicorn main:app --port 8001 --reload`}
             .map((m) => m.message)}
         />
 
-        {/* Center content */}
+        {/* Main content — full remaining width */}
         <main className="flex-1 min-w-0 overflow-y-auto p-3 space-y-3">
           {loading ? (
             <LoadingOverlay message={`Loading ${selectedSite || "site data"}…`} />
           ) : (
             <>
-              {/* Validation messages */}
+              {/* Validation banners (warnings + info only; errors go to sidebar) */}
               <ValidationBanner messages={allMsgs.filter((m) => m.severity !== "error")} />
 
-              {/* Zone A: KPI Cards */}
+              {/* ── KPI strip (2 cards) ──────────────────────────────────────── */}
               {computed ? (
                 <KpiCards data={computed} />
               ) : (
                 <div className="flex gap-3">
-                  {[1,2,3,4].map((i) => (
-                    <div
-                      key={i}
-                      className="flex-1 h-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] animate-pulse"
-                    />
-                  ))}
+                  <Skeleton className="flex-1 h-24" />
+                  <Skeleton className="flex-1 h-24" />
                 </div>
               )}
 
-              {/* Zone B: DSCR Lifetime Profile */}
+              {/* ── Hero chart: DSCR band + heatmap background ───────────────── */}
               <Panel>
-                <SectionLabel>DSCR Lifetime Profile — {loan.amortType.replace("_", " ")}</SectionLabel>
+                <SectionLabel>
+                  Cashflow vs Debt Service — {loan.amortType.replace(/_/g, " ")}
+                  {loan.amortType === "sculpted"
+                    ? ` · sculpt target ${loan.targetDscrSculpt.toFixed(2)}x @ ${loan.sculptPercentile}`
+                    : ""}
+                </SectionLabel>
                 {computed ? (
-                  <DscrChart
+                  <HeroChart
                     dscrTable={computed.dscrTable}
+                    loanSchedule={computed.loanSchedule}
+                    pctCfads={computed.pctCfads}
+                    annualOpex={computed.annualOpex}
                     minDscr={computed.minDscr}
-                    display={display}
+                    quarterlyData={computed.quarterlyData}
                   />
                 ) : (
-                  <div className="h-72 animate-pulse bg-[var(--color-bg)] rounded" />
+                  <Skeleton className="h-[380px]" />
                 )}
               </Panel>
 
-              {/* Zone C + D: side by side */}
-              <div className="grid grid-cols-2 gap-3">
-                <Panel>
-                  <SectionLabel>Revenue Distribution (simulated paths, hub/da)</SectionLabel>
-                  {computed ? (
-                    <RevenueDistChart
-                      revenuePaths={simulatedRevenue}
-                      pctRevenue={computed.pctRevenue}
-                      annualOpex={computed.annualOpex}
-                    />
-                  ) : (
-                    <div className="h-56 animate-pulse bg-[var(--color-bg)] rounded" />
-                  )}
-                </Panel>
-
-                <Panel>
-                  <SectionLabel>
-                    Annual CFADS vs Debt Service — {display.selectedPercentile}
-                  </SectionLabel>
-                  {computed ? (
-                    <CfadsDsChart
-                      dscrTable={computed.dscrTable}
-                      loanSchedule={computed.loanSchedule}
-                      annualOpex={computed.annualOpex}
-                      selectedPercentile={display.selectedPercentile}
-                    />
-                  ) : (
-                    <div className="h-56 animate-pulse bg-[var(--color-bg)] rounded" />
-                  )}
-                </Panel>
-              </div>
-
-              {/* Zone E: Monthly Distribution */}
+              {/* ── Ledger table ─────────────────────────────────────────────── */}
               <Panel>
-                <SectionLabel>Monthly Forecast Distribution (1-year horizon)</SectionLabel>
-                <MonthlyChart stats={monthlyStats} />
+                <SectionLabel>
+                  Financial Schedule — {display.selectedPercentile} revenue
+                </SectionLabel>
+                {computed ? (
+                  <LedgerTable
+                    dscrTable={computed.dscrTable}
+                    loanSchedule={computed.loanSchedule}
+                    pctRevenue={computed.pctRevenue}
+                    pctCfads={computed.pctCfads}
+                    annualOpex={computed.annualOpex}
+                    minDscr={computed.minDscr}
+                    selectedPercentile={display.selectedPercentile}
+                    quarterlyData={computed.quarterlyData}
+                    siteName={selectedSite}
+                    assetType={asset?.asset_type ?? "unknown"}
+                    loanConfig={loan}
+                    computed={computed}
+                  />
+                ) : (
+                  <Skeleton className="h-64" />
+                )}
               </Panel>
+
+              {/* ── Collapsible extras ───────────────────────────────────────── */}
+              <CollapsiblePanel title="Revenue Distribution (simulated paths)">
+                {computed ? (
+                  <RevenueDistChart
+                    revenuePaths={simulatedRevenue}
+                    pctRevenue={computed.pctRevenue}
+                    annualOpex={computed.annualOpex}
+                  />
+                ) : (
+                  <Skeleton className="h-56" />
+                )}
+              </CollapsiblePanel>
+
+              <CollapsiblePanel title="Monthly Forecast Distribution (1-year seasonal)">
+                <MonthlyChart stats={monthlyStats} />
+              </CollapsiblePanel>
             </>
           )}
         </main>
-
-        {/* Right sidebar */}
-        {computed && (
-          <CovenantScorecard data={computed} />
-        )}
       </div>
 
-      {/* Assumption disclosure */}
+      {/* ── Assumption disclosure (unchanged) ──────────────────────────────── */}
       <AssumptionBanner />
     </div>
   );

@@ -29,9 +29,12 @@ const PERCENTILE_COLORS_LIGHT = {
   P90: "#656d76",
 };
 
+type ViewMode = "lines" | "band";
+
 export function DscrChart({ dscrTable, minDscr, display }: DscrChartProps) {
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("lines");
   useEffect(() => setMounted(true), []);
 
   if (!mounted || dscrTable.length === 0) {
@@ -50,9 +53,11 @@ export function DscrChart({ dscrTable, minDscr, display }: DscrChartProps) {
   const gridColor = isDark ? "#21262d" : "#e8eaed";
   const axisColor = isDark ? "#8b949e" : "#656d76";
   const covenantColor = isDark ? "#d29922" : "#9a6700";
+  const bandFill = isDark ? "rgba(88,166,255,0.12)" : "rgba(9,105,218,0.10)";
 
   const years = dscrTable.map((r) => r.year);
 
+  // ── Lines mode traces ─────────────────────────────────────────────────────
   const percentiles: { key: keyof typeof display; label: string }[] = [
     { key: "showP10", label: "P10" },
     { key: "showP25", label: "P25" },
@@ -61,7 +66,7 @@ export function DscrChart({ dscrTable, minDscr, display }: DscrChartProps) {
     { key: "showP90", label: "P90" },
   ];
 
-  const traces = percentiles
+  const lineTraces = percentiles
     .filter(({ key }) => display[key])
     .map(({ label }) => {
       const key = label as keyof typeof colors;
@@ -83,9 +88,49 @@ export function DscrChart({ dscrTable, minDscr, display }: DscrChartProps) {
       };
     });
 
-  // Covenant min line (typed as any to avoid strict Plotly type conflicts)
+  // ── Band mode traces ──────────────────────────────────────────────────────
+  // P10 (bottom boundary — invisible line, acts as baseline for fill)
+  const bandTraces = [
+    {
+      x: years,
+      y: dscrTable.map((r) => r.dscr["P10"]),
+      name: "P10 (floor)",
+      type: "scatter" as const,
+      mode: "lines" as const,
+      line: { color: "transparent", width: 0 },
+      showlegend: false,
+      hoverinfo: "skip" as const,
+    },
+    // P90 fills down to P10 — this creates the shaded band
+    {
+      x: years,
+      y: dscrTable.map((r) => r.dscr["P90"]),
+      name: "P10 – P90 range",
+      type: "scatter" as const,
+      mode: "lines" as const,
+      fill: "tonexty" as const,
+      fillcolor: bandFill,
+      line: { color: isDark ? "#8b949e" : "#656d76", width: 1, dash: "dot" as const },
+      hovertemplate: "<b>P90</b><br>Year %{x}<br>DSCR: %{y:.2f}x<extra></extra>",
+    },
+    // P50 center line — the primary signal
+    {
+      x: years,
+      y: dscrTable.map((r) => r.dscr["P50"]),
+      name: "P50 (median)",
+      type: "scatter" as const,
+      mode: "lines+markers" as const,
+      line: { color: colors["P50"], width: 2.5, dash: "solid" as const },
+      marker: { size: 5, color: colors["P50"] },
+      hovertemplate: "<b>P50</b><br>Year %{x}<br>DSCR: %{y:.2f}x<extra></extra>",
+    },
+  ];
+
+  const activeTraces = viewMode === "lines" ? lineTraces : bandTraces;
+
+  // Covenant min line — same in both modes
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (traces as any[]).push({
+  (activeTraces as any[]).push({
     x: [years[0], years[years.length - 1]],
     y: [minDscr, minDscr],
     name: `Covenant Min (${minDscr.toFixed(2)}x)`,
@@ -135,14 +180,35 @@ export function DscrChart({ dscrTable, minDscr, display }: DscrChartProps) {
   };
 
   return (
-    <div className="plotly-chart w-full">
-      <Plot
-        data={traces}
-        layout={layout}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: "300px" }}
-        useResizeHandler
-      />
+    <div className="w-full">
+      {/* Toggle */}
+      <div className="flex justify-end mb-1">
+        <div className="inline-flex rounded overflow-hidden border border-[var(--color-border)] text-xs">
+          {(["lines", "band"] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`px-2.5 py-0.5 capitalize transition-colors ${
+                viewMode === mode
+                  ? "bg-[var(--color-accent)] text-white font-medium"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] bg-transparent"
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="plotly-chart w-full">
+        <Plot
+          data={activeTraces}
+          layout={layout}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: "100%", height: "300px" }}
+          useResizeHandler
+        />
+      </div>
     </div>
   );
 }

@@ -18,6 +18,46 @@ relates-to:
 
 ---
 
+## 0. The Formula — Quick Reference
+
+### DSCR
+
+```
+DSCR (Year t) = CFADS(t) ÷ Debt Service(t)
+```
+
+### Expanding each term
+
+```
+CFADS(t)        = Revenue(t) − OpEx(t)
+                  (simplified; full: Revenue − OpEx − Taxes − Reserve top-ups)
+
+Debt Service(t) = Principal(t) + Interest(t)
+
+Interest(t)     = Interest Rate × Opening Principal Balance(t)
+
+Principal(t)    = depends on amortization type:
+                    Level Principal  → same $ each period (declining DS over time)
+                    Level Payment    → same total DS each period (growing principal share)
+                    Sculpted         → set so CFADS / DS = target DSCR each period
+```
+
+### What the number means
+
+| DSCR | Interpretation |
+|------|---------------|
+| > 1.25x (typical covenant) | Comfortable — project has headroom above minimum |
+| = 1.25x | At the covenant limit — any downside triggers a breach warning |
+| 1.0x – 1.25x | Covenant breach — lender can enforce; project still cash-flow positive |
+| < 1.0x | Hard default — project cannot pay its debt service from operations |
+
+### In one line
+
+> **DSCR tells you: for every $1 of debt service owed, how many dollars of operating cash flow does the project generate?**
+> A DSCR of 1.30x means the project earns $1.30 for every $1.00 it owes — 30 cents of headroom.
+
+---
+
 ## 1. What You Have vs What You Need
 
 | You have | You need for full cash flow + DSCR |
@@ -460,7 +500,136 @@ For the full multi-year extension roadmap (Stages 1–4) including regime modeli
 
 ---
 
-## 7. Minimal Build Order — Gen 1
+## 7. Dashboard UI — Reading the Charts and KPIs
+
+> This section maps every element of the Gen 1 dashboard to the formulas above.
+> Open the dashboard alongside this guide as a companion reference.
+
+---
+
+### 7.1 KPI Cards (top strip)
+
+Four cards give the headline answer in under 5 seconds.
+
+#### Min DSCR
+```
+Value:  lowest DSCR across all percentiles × all years
+Sub:    which percentile and year it occurs in (e.g. "P10, Year 1")
+Detail: headroom above or below the covenant minimum
+```
+**How to read it:** This is the single binding number. If Min DSCR > covenant (e.g. 1.25x), the project services debt in every scenario. If it is below, at least one percentile/year pair breaches. A headroom of +0.10x is tight; +0.50x is comfortable.
+
+**Gen 1 note:** Because CFADS is flat and debt service declines, Min DSCR will always be in Year 1 at the lowest percentile (P10). If you change amortization to level payment, Year 1 and later years have the same debt service, so the minimum is still Year 1 P10.
+
+---
+
+#### Binding Case
+```
+Value:  DSCR in the single worst (percentile, year) cell
+Sub:    same location as Min DSCR
+Detail: "Clears 1.25x covenant" or "BREACH"
+```
+**How to read it:** The binding case is the minimum DSCR restated as a pass/fail against the covenant. It answers the lender's core question: *does the project service debt even in its worst scenario?* If this card is red, the loan is not bankable as structured.
+
+---
+
+#### Debt / CFADS
+```
+Value:  Principal ÷ Year 1 P50 CFADS  (leverage ratio, in "x")
+Sub:    "Year 1 P50 (leverage)"
+Detail: Year 1 annual debt service ($M)
+```
+**How to read it:** This is a rough leverage metric — how many years of median operating cash flow does it take to repay the full principal? A ratio of 6x means the loan equals 6 years of P50 CFADS. Lenders typically accept 5–8x for well-contracted solar; higher ratios imply more leverage. It is **not** the same as DSCR — DSCR uses annual debt service (principal + interest for that year), whereas Debt/CFADS uses total principal vs one year of cash flow.
+
+---
+
+#### Covenant Status
+```
+Value:  "ALL PASS ✓" or "[N] BREACHES"
+Sub:    total cells tested (years × 5 percentiles) or covenant threshold
+Detail: count of cells below the minimum DSCR
+```
+**How to read it:** This scans the entire DSCR table — every year, every percentile — and counts violations. "ALL PASS" across 18 years × 5 percentiles (90 cells) is the full coverage confirmation. A breach count of 5 typically means one year's P10 and P25 both fail — not a catastrophic result but worth understanding which year and why.
+
+---
+
+### 7.2 Zone B — DSCR Lifetime Profile
+
+**What it shows:** DSCR = CFADS(p) ÷ DS(t) for each percentile p and each loan year t. Every line (or the band) is a different weather scenario; the dashed horizontal line is the covenant minimum.
+
+**Lines view:** Five lines — P10 (worst weather) at the bottom, P90 (best weather) at the top. The gap between them is the uncertainty range from weather variability. All lines should stay above the covenant min for the loan to be bankable.
+
+**Band view:** The shaded area spans P10 to P90; P50 is the bold centre line. Cleaner for presentations — shows the probability range at a glance without five separate traces.
+
+**Why lines slope upward in Gen 1:** Debt service declines each year (amortization reduces the balance → lower interest) while CFADS stays flat. So DSCR = CFADS / DS mechanically improves. In Gen 2, degradation will compress CFADS and flatten or invert this slope.
+
+**What to look for:**
+- Year 1 is almost always the tightest. If P10 Year 1 clears 1.25x, the deal is structurally sound under Gen 1 assumptions.
+- The widening band (or spread between P10 and P90 lines) reflects that weather uncertainty applies equally each year, but the absolute DSCR level rises — so even P10 becomes comfortable by Year 10+.
+- If the covenant min line crosses any percentile line → breach in that scenario.
+
+---
+
+### 7.3 Zone C — Revenue Distribution
+
+**What it shows:** The distribution of annual revenue across all simulated paths (histogram bars = path frequency; KDE curve = smoothed distribution). Vertical dashed lines mark P10, P25, P50, P75, P90. The leftmost dashed line is the OpEx level.
+
+**How to read it:**
+- Width of the distribution = revenue uncertainty from weather variability.
+- P10 is the left tail — only 10% of scenarios produce less. It is the stress case for debt sizing.
+- P50 is the median — equally likely to be above or below.
+- OpEx line shows the break-even revenue below which the project cannot cover operating costs (CFADS goes negative). If P10 is far to the right of the OpEx line, operational risk is low.
+- The shape is approximately normal (bell curve) for a diversified generation portfolio; it may skew slightly depending on weather tail risk.
+
+**What to look for:** How much revenue headroom is there between P10 and OpEx? A P10/OpEx ratio of 1.5x or higher means even the worst weather year comfortably covers costs.
+
+---
+
+### 7.4 Zone D — Annual CFADS vs Debt Service
+
+**What it shows:** For the selected percentile (P50 by default), the revenue, CFADS, and OpEx bars alongside the declining debt service line, year by year.
+
+**Standard view:**
+- Tall blue bars = Revenue
+- Shorter blue bars = CFADS (Revenue − OpEx). The gap between Revenue and CFADS is OpEx.
+- Gray bars = OpEx (constant in Gen 1)
+- Gold line = Debt Service (principal + interest). Marker dots are green when CFADS > DS, red when CFADS < DS.
+
+**Risk Map view:** Only CFADS bars are shown, colour-coded by DSCR for that year:
+- **Green** → DSCR ≥ covenant + 0.30x (comfortable headroom)
+- **Amber** → DSCR between covenant and covenant + 0.30x (approaching limit)
+- **Red** → DSCR < covenant (breach)
+- Tooltip shows exact DSCR and status.
+
+**How to read it:** The gap between the CFADS bar top and the debt service line **in each year** is the absolute cash cushion ($M). Years where this gap is small are the years to stress-test. In Gen 1, the gap widens every year because DS declines while CFADS is flat.
+
+---
+
+### 7.5 Zone E — Monthly Forecast Distribution
+
+**What it shows:** The within-year seasonal revenue pattern. One box per month (Jan–Dec) showing the distribution across all simulated paths. P10/P50/P90 percentile lines overlay the boxes. A mean line (amber, diamond markers) shows the average revenue per month.
+
+**How to read it:**
+- Box height per month = within-month spread from weather variability.
+- The seasonal curve (high in summer for solar, higher in spring/autumn for wind) is immediately visible.
+- P10 line shows the worst-month pattern across all paths — useful for checking whether any single month's revenue is at risk of falling below OpEx.
+- Mean vs P50: if the mean is above P50, the distribution is right-skewed (a few very good months pull the average up); if below, it is left-skewed.
+
+**Gen 1 note:** This chart uses the actual 12-month forecast from GCS. It is the only Gen 1 chart that uses real monthly data. The other charts repeat this single year's annual total across the full loan life.
+
+---
+
+### 7.6 Right Sidebar — Covenant Scorecard
+
+**What it shows:** The full DSCR matrix — every year × every percentile as a colour-coded table. Green = passes covenant; red = breach; the exact DSCR value is in each cell.
+
+**How to read it:** Scan the first row (Year 1) — this is the tightest year. If any Year 1 cell is red, the deal breaches in that weather scenario. Move right across years — all cells should turn progressively greener as debt amortizes.
+
+The P-value reference table below the matrix shows the actual dollar revenue at each percentile, giving context for what P10 or P90 means in absolute terms for this specific asset.
+
+---
+
+## 8. Minimal Build Order — Gen 1
 
 **What you need to ship Gen 1:**
 
@@ -479,7 +648,7 @@ For the full multi-year extension roadmap (Stages 1–4) including regime modeli
 
 ---
 
-## 8. References in This Repo
+## 9. References in This Repo
 
 - **Construction loan vs term loan, conversion, IDC:** [[foundations/accounting/debt_structures#Construction Loan vs Term Loan]].
 - **CFADS / DSCR definition:** [[foundations/accounting/accounting#NOI → CFADS → CAFD]], [[risk/Project_Finance_Risk_Guide#5. DSCR and Coverage Ratio Mechanics]].

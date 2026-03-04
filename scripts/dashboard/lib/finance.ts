@@ -6,6 +6,7 @@ import type {
   PercentileMap,
   PercentileKey,
   AssetMeta,
+  QuarterlyPoint,
 } from "@/types";
 import { computePercentiles } from "@/lib/stats";
 
@@ -148,6 +149,62 @@ export function computeDscrTable(
   });
 }
 
+// ── Quarterly CFADS + LTM DSCR ────────────────────────────────────────────────
+
+/**
+ * Build the 72-point quarterly time series (tenorYears × 4 quarters).
+ *
+ * quarterlyRevPcts: 4-element array of PercentileMaps (Q1-Q4) from monthly data.
+ * In Gen 1 the seasonal pattern repeats every year (revenue constant assumption A1).
+ * LTM DSCR = annual CFADS / annual DS (always equals annual DSCR in Gen 1, but
+ * framework is Gen 2-ready: when quarterly revenue varies per year, LTM will differ
+ * between Q1 and Q3 test dates).
+ */
+export function computeQuarterlyData(
+  quarterlyRevPcts: PercentileMap[],   // length 4: Q1..Q4 quarterly revenue percentiles
+  annualOpex: number,
+  annualCfadsPcts: PercentileMap,      // correct annual CFADS percentiles (from computeFinancials)
+  loanSchedule: LoanScheduleRow[],
+  minDscr: number
+): QuarterlyPoint[] {
+  const keys: PercentileKey[] = ["P10", "P25", "P50", "P75", "P90"];
+  const quarterlyOpex = annualOpex / 4;
+  const points: QuarterlyPoint[] = [];
+
+  for (const row of loanSchedule) {
+    const quarterlyDS = row.debtService / 4;
+
+    // LTM DSCR uses the correctly-computed annual CFADS percentiles.
+    // Sum-of-quarterly-percentiles != percentile-of-annual-sum, so we must
+    // use the annual figure directly. In Gen 1 LTM = annual for every quarter
+    // within the same year; varies year-to-year as DS changes with amortization.
+    const ltmDscr: PercentileMap = {} as PercentileMap;
+    for (const k of keys) {
+      ltmDscr[k] = row.debtService > 0 ? annualCfadsPcts[k] / row.debtService : 0;
+    }
+
+    for (let q = 0; q < 4; q++) {
+      const qRevPcts = quarterlyRevPcts[q];
+      const qCfads: PercentileMap = {} as PercentileMap;
+      for (const k of keys) {
+        qCfads[k] = qRevPcts[k] - quarterlyOpex;
+      }
+
+      points.push({
+        year: row.year,
+        quarter: q + 1,
+        label: `Q${q + 1}-Y${row.year}`,
+        revenue: qRevPcts,
+        cfads: qCfads,
+        debtService: quarterlyDS,
+        ltmDscr,
+      });
+    }
+  }
+
+  return points;
+}
+
 // ── Full computation ──────────────────────────────────────────────────────────
 
 export function computeFinancials(
@@ -155,7 +212,8 @@ export function computeFinancials(
   asset: AssetMeta,
   loanConfig: LoanConfig,
   opexOverride: number | null,
-  minDscrOverride: number | null
+  minDscrOverride: number | null,
+  quarterlyRevPcts?: PercentileMap[] | null // optional: from computeQuarterlyPercentiles
 ): ComputedFinancials {
   const { value: annualOpex } = resolveOpex(asset, opexOverride);
   const { value: minDscr } = resolveMinDscr(asset, minDscrOverride);
@@ -210,6 +268,12 @@ export function computeFinancials(
     }
   }
 
+  // Quarterly data (requires monthly paths; empty array if not available)
+  const quarterlyData =
+    quarterlyRevPcts && quarterlyRevPcts.length === 4
+      ? computeQuarterlyData(quarterlyRevPcts, annualOpex, pctCfads, loanSchedule, minDscr)
+      : [];
+
   return {
     annualOpex,
     minDscr,
@@ -217,6 +281,7 @@ export function computeFinancials(
     pctCfads,
     loanSchedule,
     dscrTable,
+    quarterlyData,
     minDscrValue,
     minDscrYear,
     minDscrPercentile,
