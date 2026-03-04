@@ -7,6 +7,7 @@ import type {
   DscrRow,
   LoanScheduleRow,
   PercentileMap,
+  PercentileKey,
   QuarterlyPoint,
 } from "@/types";
 import { fmtDscr, fmtMillion } from "@/lib/api";
@@ -22,24 +23,68 @@ interface HeroChartProps {
   quarterlyData?: QuarterlyPoint[]; // optional — falls back to annual if missing
 }
 
-// ── Risk color helpers (by P10 LTM DSCR vs covenant) ─────────────────────────
+// ── Continuous risk gradient (P10 LTM DSCR vs covenant) ─────────────────────
 
-function riskColor(p10Dscr: number, minDscr: number, isDark: boolean): string {
-  if (p10Dscr < minDscr)
-    return isDark ? "#f85149" : "#cf222e";
-  if (p10Dscr < minDscr + 0.25)
-    return isDark ? "#d29922" : "#bf8700";
-  if (p10Dscr < minDscr + 0.75)
-    return isDark ? "#3fb950" : "#1a7f37";
-  return isDark ? "#3fb950" : "#1a7f37";
+interface ColorStop { t: number; r: number; g: number; b: number }
+
+const DARK_STOPS: ColorStop[] = [
+  { t: 0.00, r: 248, g: 81,  b: 73  }, // #f85149  severe breach
+  { t: 0.20, r: 235, g: 130, b: 50  }, // orange   moderate breach
+  { t: 0.35, r: 210, g: 153, b: 34  }, // #d29922  amber — near threshold
+  { t: 0.60, r: 63,  g: 185, b: 80  }, // #3fb950  comfortable
+  { t: 1.00, r: 35,  g: 134, b: 54  }, // #238636  very safe
+];
+const LIGHT_STOPS: ColorStop[] = [
+  { t: 0.00, r: 207, g: 34,  b: 46  }, // #cf222e  severe breach
+  { t: 0.20, r: 217, g: 119, b: 6   }, // #d97706  orange
+  { t: 0.35, r: 191, g: 135, b: 0   }, // #bf8700  amber
+  { t: 0.60, r: 45,  g: 164, b: 78  }, // #2da44e  comfortable
+  { t: 1.00, r: 26,  g: 127, b: 55  }, // #1a7f37  very safe
+];
+
+function lerpStops(stops: ColorStop[], t: number): string {
+  const tc = Math.max(0, Math.min(1, t));
+  let lo = stops[0], hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (tc >= stops[i].t && tc <= stops[i + 1].t) {
+      lo = stops[i];
+      hi = stops[i + 1];
+      break;
+    }
+  }
+  const s = hi.t === lo.t ? 0 : (tc - lo.t) / (hi.t - lo.t);
+  const r = Math.round(lo.r + (hi.r - lo.r) * s);
+  const g = Math.round(lo.g + (hi.g - lo.g) * s);
+  const b = Math.round(lo.b + (hi.b - lo.b) * s);
+  return `rgb(${r},${g},${b})`;
 }
 
-function riskOpacity(p10Dscr: number, minDscr: number): number {
-  if (p10Dscr < minDscr) return 0.13;
-  if (p10Dscr < minDscr + 0.25) return 0.10;
-  if (p10Dscr < minDscr + 0.75) return 0.07;
-  return 0.04;
+function dscrToT(dscr: number, minDscr: number): number {
+  const floor = minDscr - 0.30;
+  const ceiling = minDscr + 0.75;
+  return (dscr - floor) / (ceiling - floor);
 }
+
+function riskColor(dscr: number, minDscr: number, isDark: boolean): string {
+  return lerpStops(isDark ? DARK_STOPS : LIGHT_STOPS, dscrToT(dscr, minDscr));
+}
+
+function riskOpacity(dscr: number, minDscr: number): number {
+  const t = Math.max(0, Math.min(1, dscrToT(dscr, minDscr)));
+  return 0.22 - t * 0.17; // breach → 0.22, very safe → 0.05
+}
+
+function dscrMark(dscr: number, minDscr: number): string {
+  return dscr >= minDscr ? "✓" : "✗";
+}
+
+const RISK_BANDS: { y0: number; y1: number; key: PercentileKey }[] = [
+  { y0: 0.0, y1: 0.2, key: "P10" },
+  { y0: 0.2, y1: 0.4, key: "P25" },
+  { y0: 0.4, y1: 0.6, key: "P50" },
+  { y0: 0.6, y1: 0.8, key: "P75" },
+  { y0: 0.8, y1: 1.0, key: "P90" },
+];
 
 // ── Annual fallback (when no monthly data) ────────────────────────────────────
 
@@ -61,19 +106,24 @@ function buildAnnualTraces(
   const years = dscrTable.map((r) => r.year);
   const toM = (v: number) => v / 1e6;
 
-  const heatmapShapes = dscrTable.map((row) => ({
-    type: "rect" as const,
-    xref: "x" as const,
-    yref: "paper" as const,
-    x0: row.year - 0.5,
-    x1: row.year + 0.5,
-    y0: 0,
-    y1: 1,
-    fillcolor: riskColor(row.dscr.P10, minDscr, isDark),
-    opacity: riskOpacity(row.dscr.P10, minDscr),
-    line: { width: 0 },
-    layer: "below" as const,
-  }));
+  const heatmapShapes = dscrTable.flatMap((row) =>
+    RISK_BANDS.map((band) => {
+      const dscr = row.dscr[band.key];
+      return {
+        type: "rect" as const,
+        xref: "x" as const,
+        yref: "paper" as const,
+        x0: row.year - 0.5,
+        x1: row.year + 0.5,
+        y0: band.y0,
+        y1: band.y1,
+        fillcolor: riskColor(dscr, minDscr, isDark),
+        opacity: riskOpacity(dscr, minDscr),
+        line: { width: 0 },
+        layer: "below" as const,
+      };
+    })
+  );
 
   const cfadsP10 = years.map(() => toM(pctCfads.P10));
   const cfadsP25 = years.map(() => toM(pctCfads.P25));
@@ -100,11 +150,11 @@ function buildAnnualTraces(
     const pass = row.dscr.P10 >= minDscr;
     return (
       `<b>Year ${row.year} — LTM DSCR</b><br>` +
-      `P10: ${fmtDscr(row.dscr.P10)} ${row.dscr.P10 >= minDscr ? "✓" : "✗"}<br>` +
-      `P25: ${fmtDscr(row.dscr.P25)} ✓<br>` +
-      `P50: ${fmtDscr(row.dscr.P50)} ✓<br>` +
-      `P75: ${fmtDscr(row.dscr.P75)} ✓<br>` +
-      `P90: ${fmtDscr(row.dscr.P90)} ✓<br>` +
+      `P10: ${fmtDscr(row.dscr.P10)} ${dscrMark(row.dscr.P10, minDscr)}<br>` +
+      `P25: ${fmtDscr(row.dscr.P25)} ${dscrMark(row.dscr.P25, minDscr)}<br>` +
+      `P50: ${fmtDscr(row.dscr.P50)} ${dscrMark(row.dscr.P50, minDscr)}<br>` +
+      `P75: ${fmtDscr(row.dscr.P75)} ${dscrMark(row.dscr.P75, minDscr)}<br>` +
+      `P90: ${fmtDscr(row.dscr.P90)} ${dscrMark(row.dscr.P90, minDscr)}<br>` +
       `DS: ${fmtMillion(row.debtService)} · CFADS: ${fmtMillion(row.cfads.P50)}<br>` +
       `Covenant (${minDscr.toFixed(2)}x): <b>${pass ? "PASS" : "BREACH"}</b>`
     );
@@ -157,19 +207,24 @@ function buildQuarterlyTraces(
   const toM = (v: number) => v / 1e6;
   const labels = quarterlyData.map((p) => p.label);
 
-  const heatmapShapes = quarterlyData.map((p, i) => ({
-    type: "rect" as const,
-    xref: "x" as const,
-    yref: "paper" as const,
-    x0: i - 0.5,
-    x1: i + 0.5,
-    y0: 0,
-    y1: 1,
-    fillcolor: riskColor(p.ltmDscr.P10, minDscr, isDark),
-    opacity: riskOpacity(p.ltmDscr.P10, minDscr),
-    line: { width: 0 },
-    layer: "below" as const,
-  }));
+  const heatmapShapes = quarterlyData.flatMap((p, i) =>
+    RISK_BANDS.map((band) => {
+      const dscr = p.ltmDscr[band.key];
+      return {
+        type: "rect" as const,
+        xref: "x" as const,
+        yref: "paper" as const,
+        x0: i - 0.5,
+        x1: i + 0.5,
+        y0: band.y0,
+        y1: band.y1,
+        fillcolor: riskColor(dscr, minDscr, isDark),
+        opacity: riskOpacity(dscr, minDscr),
+        line: { width: 0 },
+        layer: "below" as const,
+      };
+    })
+  );
 
   const cfadsP10 = quarterlyData.map((p) => toM(p.cfads.P10));
   const cfadsP25 = quarterlyData.map((p) => toM(p.cfads.P25));
@@ -194,11 +249,11 @@ function buildQuarterlyTraces(
     const pass = p.ltmDscr.P10 >= minDscr;
     return (
       `<b>${p.label} — LTM DSCR (trailing 12m)</b><br>` +
-      `P10: ${fmtDscr(p.ltmDscr.P10)} ${pass ? "✓" : "✗"}<br>` +
-      `P25: ${fmtDscr(p.ltmDscr.P25)}<br>` +
-      `P50: ${fmtDscr(p.ltmDscr.P50)}<br>` +
-      `P75: ${fmtDscr(p.ltmDscr.P75)}<br>` +
-      `P90: ${fmtDscr(p.ltmDscr.P90)}<br>` +
+      `P10: ${fmtDscr(p.ltmDscr.P10)} ${dscrMark(p.ltmDscr.P10, minDscr)}<br>` +
+      `P25: ${fmtDscr(p.ltmDscr.P25)} ${dscrMark(p.ltmDscr.P25, minDscr)}<br>` +
+      `P50: ${fmtDscr(p.ltmDscr.P50)} ${dscrMark(p.ltmDscr.P50, minDscr)}<br>` +
+      `P75: ${fmtDscr(p.ltmDscr.P75)} ${dscrMark(p.ltmDscr.P75, minDscr)}<br>` +
+      `P90: ${fmtDscr(p.ltmDscr.P90)} ${dscrMark(p.ltmDscr.P90, minDscr)}<br>` +
       `Covenant (${minDscr.toFixed(2)}x): <b>${pass ? "PASS" : "BREACH"}</b>`
     );
   });
