@@ -5,16 +5,16 @@ domain: project-finance
 created: 2026-03-04
 status: v2-ui-redesign
 relates-to:
-  - ui_dashboard_plan_old.md
-  - From_Forecast_to_Cashflow_and_DSCR.md
-  - gcs_bucket_structure.md
+  - archive/ui_dashboard_plan_old.md
+  - cashflow_dscr_methodology.md
+  - infra/gcs_bucket_structure.md
   - notebooks/01_gen1_cashflow_dscr.ipynb
 ---
 
 # Project Finance Risk Dashboard — New UI Plan
 
 > **Purpose:** Plan **UI-focused updates** only. Modeling (Gen 1 DSCR, amortization, CFADS, validation rules) stays as-is.  
-> **Previous spec:** Full v1 prototype spec is preserved in [`ui_dashboard_plan_old.md`](ui_dashboard_plan_old.md).
+> **Previous spec:** Full v1 prototype spec is preserved in [`ui_dashboard_plan_old.md`](archive/ui_dashboard_plan_old.md).
 
 ---
 
@@ -396,7 +396,7 @@ therefore shows year-level coloring with 4 identical columns per year, but each
 column has 5 distinct vertical bands (P10 at bottom, P90 at top) with different
 colors reflecting the risk spread across scenarios.
 
-**Full worked example:** See `From_Forecast_to_Cashflow_and_DSCR.md` §5.3a for
+**Full worked example:** See `cashflow_dscr_methodology.md` §5.3a for
 a complete walkthrough with numerical examples covering quarterly aggregation,
 the LTM DSCR calculation, why naive quarterly DSCR is misleading, the percentile
 addition trap, and Gen 1 vs Gen 2 behavior.
@@ -753,14 +753,95 @@ Explicit list to avoid scope creep:
 
 ---
 
+### 2.14 Computation architecture — decision record
+
+> **Why this is documented here:** This decision directly affects what lives in the
+> dashboard vs the Python pipeline, and will matter when Gen 2 is built.
+
+#### The core split
+
+```
+Python side  →  simulation → revenue paths → revenue.duckdb   (fixed, pre-computed)
+TS side      →  percentiles + CFADS + amort schedule + DSCR   (computed at query time)
+```
+
+This split is intentional and correct. The reasoning:
+
+**Why financial computations (CFADS, amortization, DSCR) live in TypeScript:**
+
+CFADS and DSCR are not properties of the asset — they are properties of
+**asset × loan configuration**. Principal, rate, tenor, amortization type, and
+OpEx are all user-configurable in the sidebar. Pre-computing them in Python would
+require storing a combinatorial product of (asset × principal × rate × tenor ×
+amort type), which is impractical. The computation must happen at query time in
+response to user input.
+
+Moving this to a server-side API endpoint would also break interactive UX — every
+sidebar change would require an HTTP round trip. The math is deterministic,
+O(tenor × 5 percentiles), and runs in microseconds. Client-side is the right place.
+
+**Why revenue percentiles live in Python / DuckDB:**
+
+The revenue distribution (P10–P90) comes from ~1,000 bootstrap-resampled paths
+that require the full weather + price simulation pipeline. This is heavy computation
+that happens offline and is stored in `aggregated_data/{slug}/revenue.duckdb`. The
+dashboard reads the raw paths and computes percentiles client-side (`computePercentiles()`
+in `lib/stats.ts`) — a fast, one-shot sort on ~1,000 numbers.
+
+#### What the Python notebook is for
+
+`notebooks/01_gen1_cashflow_dscr.ipynb` implements the same CFADS + amortization +
+DSCR logic as `lib/finance.ts`. It exists as:
+
+1. **Auditable reference** — methodology validation, number-checking, lender review
+2. **Production team handoff** — shows the full computation in Python for team members
+   who don't read TypeScript
+3. **Batch analysis** — when running analysis on many assets or loan configurations
+   programmatically, use the notebook or a script derived from it, not the dashboard
+
+The notebook is the source of truth for methodology; the TypeScript is a UI wrapper
+around that methodology.
+
+#### When to move computation to Python (Gen 2 threshold)
+
+| Computation | Keep in TS | Move to Python |
+|-------------|-----------|----------------|
+| Amortization schedule | ✓ Always | — |
+| CFADS = Revenue − OpEx | ✓ Always | — |
+| DSCR ratio | ✓ Always | — |
+| Revenue percentiles from raw paths | ✓ Fast enough | — |
+| Monte Carlo simulation (1,000+ paths × 18 years) | — | ✓ Gen 2 |
+| HMM regime sampling | — | ✓ Gen 2 |
+| OpEx shock distributions | — | ✓ Gen 2 |
+| Breach probability calculation | — | ✓ Gen 2 |
+
+The threshold is Monte Carlo. When Gen 2 adds path-level simulation across the full
+loan life, that simulation runs in Python and results are stored in DuckDB (a new
+`multi_year_paths` table alongside the existing `annual` and `monthly` tables). The
+dashboard TS layer then reads pre-simulated paths and applies the same deterministic
+financial math it does today.
+
+#### For production team sharing
+
+The recommended handoff package is:
+
+1. `notebooks/01_gen1_cashflow_dscr.ipynb` — full computation in Python
+2. `docs/cashflow_dscr_methodology.md` — methodology and all Gen 1 assumptions
+3. The running dashboard URL — for interactive exploration
+4. *(Future)* A Python batch script `scripts/batch_dscr.py` that takes
+   `(asset_slug, loan_config)` as inputs and produces the same DSCR table as
+   the dashboard — for programmatic use without opening a browser
+
+---
+
 ## 3. References
 
 | Document | Role |
 |----------|------|
-| [ui_dashboard_plan_old.md](ui_dashboard_plan_old.md) | Full v1 prototype spec (zones, wireframes, validation table, Gen 2 map, references) |
-| [From_Forecast_to_Cashflow_and_DSCR.md](From_Forecast_to_Cashflow_and_DSCR.md) | Methodology and Gen 1 assumptions |
-| [gcs_bucket_structure.md](gcs_bucket_structure.md) | GCS paths and DuckDB usage |
-| [asset_registry.md](asset_registry.md) | Registry schema for site dropdown and defaults |
+| [archive/ui_dashboard_plan_old.md](archive/ui_dashboard_plan_old.md) | Full v1 prototype spec (zones, wireframes, validation table, Gen 2 map, references) |
+| [cashflow_dscr_methodology.md](cashflow_dscr_methodology.md) | Methodology and Gen 1 assumptions |
+| [infra/gcs_bucket_structure.md](infra/gcs_bucket_structure.md) | GCS paths and DuckDB usage |
+| [infra/asset_registry.md](infra/asset_registry.md) | Registry schema for site dropdown and defaults |
 | `scripts/README.md` | Run instructions and architecture summary |
 
 ---

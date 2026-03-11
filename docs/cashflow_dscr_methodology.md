@@ -596,6 +596,50 @@ P10 breaches (1.16x < 1.25x), P25 through P90 pass. This matches the annual DSCR
 
 ---
 
+#### Step 4a: Cold-start behavior — Gen 1 vs Gen 2
+
+**The question:** When computing LTM DSCR at Q1 of Year 1, there are no prior quarters. What does the trailing 12-month window use?
+
+**Gen 1 answer: no cold-start problem.**
+
+Because of Assumption A1 (revenue constant across all years), Year 0 and Year 1 have identical seasonal patterns. The trailing 4-quarter window from Q1-Y1:
+
+```
+LTM window at Q1-Y1 = Q2-Y0 + Q3-Y0 + Q4-Y0 + Q1-Y1
+                     = (Year 0 = Year 1 by A1)
+                     = same total as Q1-Y1 + Q2-Y1 + Q3-Y1 + Q4-Y1
+                     = full Year 1 annual CFADS
+```
+
+All 4 quarters within any year Y therefore share the same LTM DSCR:
+
+```
+LTM DSCR[Y, any quarter] = annualCFADS[p] / annualDS[Y]
+```
+
+**Implementation** (`lib/finance.ts → computeQuarterlyData`): The code short-circuits the rolling window entirely — it computes `annualCfadsPcts[k] / row.debtService` once per year and assigns it to all 4 quarters of that year. No prior-year data is needed, no bootstrap assumption is required. This is correct under A1 and intentional: the implementation comment reads *"In Gen 1 LTM = annual for every quarter within the same year"*.
+
+**Gen 2 bootstrap problem (future):**
+
+When degradation + PPA escalation make Y1 ≠ Y2, the trailing window for Q1-Y1 genuinely spans a year that hasn't been modeled (Y0, pre-COD). Two options:
+
+| Option | Approach | When to use |
+|--------|----------|-------------|
+| **Bootstrap Y0 = Y1** | Treat Year 0 seasonal pattern as identical to Year 1 | Conservative default; applies to first year of operation only |
+| **Deferred LTM start** | Report LTM DSCR from Q4-Y1 onward (first full 4-quarter window available) | Cleaner but delays the first covenant test point by 9 months |
+
+Gen 2 `computeQuarterlyData` will also need to sum across year boundaries for mid-year LTM windows:
+
+```
+Q1-Y2 LTM = Q2-Y1_cfads + Q3-Y1_cfads + Q4-Y1_cfads + Q1-Y2_cfads
+```
+
+Since Y1 and Y2 will have different CFADS levels (degradation, escalation), each of the 4 quarters within a year will produce a *different* LTM DSCR — unlike Gen 1 where all 4 are identical.
+
+**Summary:** Gen 1 has no cold-start issue — it is a consequence of A1, not a deliberate design decision. When A1 is relaxed in Gen 2, explicitly document which bootstrap option is used for Q1-Y1.
+
+---
+
 #### Step 5: Why LTM DSCR varies across years
 
 Revenue and OpEx are constant in Gen 1 (assumption A1), so annual CFADS is the same every year. But **debt service declines** as principal amortizes (level payment: interest portion shrinks as balance decreases). LTM DSCR improves purely from this mechanical effect:

@@ -39,7 +39,7 @@ export function AssumptionBanner() {
         </span>
         <span className="text-[var(--color-text-muted)]">
           — click to {expanded ? "collapse" : "expand"} · see{" "}
-          <code className="font-mono">docs/From_Forecast_to_Cashflow_and_DSCR.md §5.4</code>
+          <code className="font-mono">docs/cashflow_dscr_methodology.md §5.4</code>
         </span>
       </button>
 

@@ -5,8 +5,8 @@ domain: project-finance
 created: 2026-02-28
 status: v1-prototype-spec
 relates-to:
-  - From_Forecast_to_Cashflow_and_DSCR.md
-  - gcs_bucket_structure.md
+  - ../cashflow_dscr_methodology.md
+  - ../infra/gcs_bucket_structure.md
   - notebooks/01_gen1_cashflow_dscr.ipynb
 ---
 
@@ -357,7 +357,7 @@ Every input with `(i)` has a sourced default. The tooltip content and the notebo
 | **Principal** | $50M | Illustrative mid-size utility-scale solar loan | None — user must set | Yes, required |
 | **Rate** | 6.0% | Illustrative fixed rate; typical US project finance 2024–25 range is 5.5–7.5% | Market convention | Yes |
 | **Tenor** | 18 yr | Industry standard for utility-scale renewable term debt | Norton Rose Fulbright 2024; NREL ATB guidance | Yes |
-| **Amort type** | level_principal | Default chosen so DSCR improves over time (shows amortization benefit); industry increasingly uses sculpted | See `docs/From_Forecast_to_Cashflow_and_DSCR.md §4a` | Yes — dropdown |
+| **Amort type** | level_principal | Default chosen so DSCR improves over time (shows amortization benefit); industry increasingly uses sculpted | See `docs/cashflow_dscr_methodology.md §4a` | Yes — dropdown |
 | **Target DSCR (sculpted)** | 1.40x | Conservative headroom above solar covenant (1.25x); common lender sculpt target | Industry practice | Yes |
 | **Sculpt percentile** | P50 | Base-case revenue used to shape DS schedule | Convention — lenders sculpt to expected (P50) cash flow | Yes — dropdown |
 | **OpEx** | `AC_MW × $23k/MW-yr` | Derived from `solar_asset.ac_capacity_mw` in asset registry × NREL ATB 2024 all-in solar OpEx | NREL ATB 2024: solar all-in $22–25/kWAC-yr; `docs/extra/discussions/project_finance_opex.md` | Yes — type to override |
@@ -541,7 +541,7 @@ Always-visible strip at the bottom:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│  GEN 1 ASSUMPTIONS (see docs/From_Forecast_to_Cashflow_and_DSCR.md §5.4)        │
+│  GEN 1 ASSUMPTIONS (see docs/cashflow_dscr_methodology.md §5.4)        │
 │  A1 Revenue constant across all years · A2 No degradation · A3 No price escal.  │
 │  A4 Flat OpEx: zero escalation, no component structure, no inflation             │
 │  A5 Annual covenant test · A6 Hub/DA only · A7 No reserves                      │
@@ -556,7 +556,7 @@ This is non-negotiable — it communicates model limitations to any lender who s
 the dashboard, which is a transparency requirement for professional use.
 
 **A4 and A9 are the most consequential OpEx assumptions.** Their combined effect on late-year
-DSCR is large and directionally ambiguous (see `docs/From_Forecast_to_Cashflow_and_DSCR.md §5.4`):
+DSCR is large and directionally ambiguous (see `docs/cashflow_dscr_methodology.md §5.4`):
 - No OpEx inflation (A4) → **overstates** late-year CFADS by ~40% at 2.5%/yr over 18yr
 - No OpEx uncertainty (A9) → **understates** tail risk; a single bad year (insurance shock,
   major maintenance event) can push DSCR below covenant without appearing in any Gen 1 output
@@ -683,9 +683,9 @@ others as needed.
 | File | What it contains | Why it matters for the dashboard |
 |------|-----------------|----------------------------------|
 | [`notebooks/01_gen1_cashflow_dscr.ipynb`](../notebooks/01_gen1_cashflow_dscr.ipynb) | Working Gen 1 computation: asset registry lookup, revenue load from GCS, CFADS, amortization (level payment / level principal / sculpted), DSCR table, plots, summary | **The computation engine.** The dashboard is a UI wrapper around exactly this notebook. Every variable (`SITE`, `AMORT_TYPE`, `ANNUAL_OPEX`, `MIN_DSCR`, `loan_schedule`, `dscr_df`, `pct_revenue`) must match. |
-| [`docs/From_Forecast_to_Cashflow_and_DSCR.md`](From_Forecast_to_Cashflow_and_DSCR.md) | Full methodology: CFADS definition, loan inputs, amortization types (incl. sculpted deep dive), DSCR formula, Gen 1 assumptions (A1–A8), Gen 1→Gen 2 upgrade path, 5-step OpEx modeling evolution | **The spec.** Every chart, KPI, and assumption label in the dashboard maps to a section of this doc. If a number on the dashboard is questioned, the answer is here. |
-| [`docs/gcs_bucket_structure.md`](gcs_bucket_structure.md) | GCS bucket layout, `aggregated_data/{asset_slug}/revenue.duckdb` schema, `asset_registry.duckdb` location, file naming rules | **The data source.** Explains exactly what the dashboard loads and where it comes from. Critical for the site dropdown (asset slugs), revenue data load, and any GCS connectivity issues. |
-| [`docs/asset_registry.md`](asset_registry.md) | Full schema for `asset_registry.duckdb`: `asset` table (asset_slug, asset_type, state), `solar_asset` (ac_capacity_mw, system_type), `wind_asset` (ac_capacity_mw, n_turbines), `asset_price`, all lookup tables | **The registry schema.** Used by the `load_asset_registry()` function in the notebook to derive OpEx from capacity and set technology-appropriate MIN_DSCR defaults. Dashboard site dropdown is populated from here. |
+| [`docs/cashflow_dscr_methodology.md`](../cashflow_dscr_methodology.md) | Full methodology: CFADS definition, loan inputs, amortization types (incl. sculpted deep dive), DSCR formula, Gen 1 assumptions (A1–A8), Gen 1→Gen 2 upgrade path, 5-step OpEx modeling evolution | **The spec.** Every chart, KPI, and assumption label in the dashboard maps to a section of this doc. If a number on the dashboard is questioned, the answer is here. |
+| [`docs/infra/gcs_bucket_structure.md`](../infra/gcs_bucket_structure.md) | GCS bucket layout, `aggregated_data/{asset_slug}/revenue.duckdb` schema, `asset_registry.duckdb` location, file naming rules | **The data source.** Explains exactly what the dashboard loads and where it comes from. Critical for the site dropdown (asset slugs), revenue data load, and any GCS connectivity issues. |
+| [`docs/infra/asset_registry.md`](../infra/asset_registry.md) | Full schema for `asset_registry.duckdb`: `asset` table (asset_slug, asset_type, state), `solar_asset` (ac_capacity_mw, system_type), `wind_asset` (ac_capacity_mw, n_turbines), `asset_price`, all lookup tables | **The registry schema.** Used by the `load_asset_registry()` function in the notebook to derive OpEx from capacity and set technology-appropriate MIN_DSCR defaults. Dashboard site dropdown is populated from here. |
 
 ---
 
