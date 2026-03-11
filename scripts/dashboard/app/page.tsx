@@ -148,12 +148,16 @@ export default function DashboardPage() {
       });
   }, []);
 
+  // ── Per-site warning (non-blocking) ──────────────────────────────────────────
+  const [siteWarning, setSiteWarning] = useState<string | null>(null);
+
   // ── Load site data when site or filter changes ────────────────────────────────
   const loadSiteData = useCallback(
     async (slug: string, kind: string, market: string) => {
       if (!slug) return;
       setLoading(true);
       setError(null);
+      setSiteWarning(null);
       try {
         const data = await fetchSiteData(slug, kind, market);
         setSiteData(data);
@@ -161,7 +165,9 @@ export default function DashboardPage() {
         setMinDscrOverride(null);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        setError(`Failed to load data for ${slug}: ${msg}`);
+        // Don't block the whole page — show a dismissible warning and clear data
+        setSiteWarning(`No data available for "${slug}". Select another site. (${msg})`);
+        setSiteData(null);
       } finally {
         setLoading(false);
       }
@@ -252,7 +258,7 @@ export default function DashboardPage() {
 
   const pathCount = simulatedRevenue.length;
 
-  // ── Error state ───────────────────────────────────────────────────────────────
+  // ── Full-page error — only for API connectivity failures ──────────────────────
   if (error) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -331,6 +337,16 @@ uvicorn main:app --port 8001 --reload`}
             <>
               {/* Validation banners (warnings + info only; errors go to sidebar) */}
               <ValidationBanner messages={allMsgs.filter((m) => m.severity !== "error")} />
+
+              {/* ── Site data warning (non-blocking) ─────────────────────────── */}
+              {siteWarning && (
+                <div className="flex items-start gap-2 px-3 py-2 rounded-md text-xs
+                  bg-[var(--color-surface)] border border-[var(--cov-amber)]
+                  text-[var(--color-text-muted)]">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--cov-amber)]" />
+                  <span>{siteWarning}</span>
+                </div>
+              )}
 
               {/* ── KPI strip (2 cards) ──────────────────────────────────────── */}
               {computed ? (

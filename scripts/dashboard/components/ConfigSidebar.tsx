@@ -329,7 +329,7 @@ export function ConfigSidebar({
 
       <Field
         label="Amortization"
-        tooltip="level_payment: constant DS (annuity)\nlevel_principal: DS declines — DSCR improves\nsculpted: DS = CFADS/target_DSCR\nSource: docs/From_Forecast_to_Cashflow_and_DSCR.md §4a"
+        tooltip="level_payment: constant DS (annuity)\nlevel_principal: DS declines — DSCR improves\nsculpted: DS = CFADS/target_DSCR\nSource: docs/cashflow_dscr_methodology.md §4a"
       >
         <Select
           value={loan.amortType}

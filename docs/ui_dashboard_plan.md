@@ -5,16 +5,16 @@ domain: project-finance
 created: 2026-03-04
 status: v2-ui-redesign
 relates-to:
-  - ui_dashboard_plan_old.md
-  - From_Forecast_to_Cashflow_and_DSCR.md
-  - gcs_bucket_structure.md
+  - archive/ui_dashboard_plan_old.md
+  - cashflow_dscr_methodology.md
+  - infra/gcs_bucket_structure.md
   - notebooks/01_gen1_cashflow_dscr.ipynb
 ---
 
 # Project Finance Risk Dashboard — New UI Plan
 
 > **Purpose:** Plan **UI-focused updates** only. Modeling (Gen 1 DSCR, amortization, CFADS, validation rules) stays as-is.  
-> **Previous spec:** Full v1 prototype spec is preserved in [`ui_dashboard_plan_old.md`](ui_dashboard_plan_old.md).
+> **Previous spec:** Full v1 prototype spec is preserved in [`ui_dashboard_plan_old.md`](archive/ui_dashboard_plan_old.md).
 
 ---
 
@@ -396,7 +396,7 @@ therefore shows year-level coloring with 4 identical columns per year, but each
 column has 5 distinct vertical bands (P10 at bottom, P90 at top) with different
 colors reflecting the risk spread across scenarios.
 
-**Full worked example:** See `From_Forecast_to_Cashflow_and_DSCR.md` §5.3a for
+**Full worked example:** See `cashflow_dscr_methodology.md` §5.3a for
 a complete walkthrough with numerical examples covering quarterly aggregation,
 the LTM DSCR calculation, why naive quarterly DSCR is misleading, the percentile
 addition trap, and Gen 1 vs Gen 2 behavior.
@@ -757,10 +757,10 @@ Explicit list to avoid scope creep:
 
 | Document | Role |
 |----------|------|
-| [ui_dashboard_plan_old.md](ui_dashboard_plan_old.md) | Full v1 prototype spec (zones, wireframes, validation table, Gen 2 map, references) |
-| [From_Forecast_to_Cashflow_and_DSCR.md](From_Forecast_to_Cashflow_and_DSCR.md) | Methodology and Gen 1 assumptions |
-| [gcs_bucket_structure.md](gcs_bucket_structure.md) | GCS paths and DuckDB usage |
-| [asset_registry.md](asset_registry.md) | Registry schema for site dropdown and defaults |
+| [archive/ui_dashboard_plan_old.md](archive/ui_dashboard_plan_old.md) | Full v1 prototype spec (zones, wireframes, validation table, Gen 2 map, references) |
+| [cashflow_dscr_methodology.md](cashflow_dscr_methodology.md) | Methodology and Gen 1 assumptions |
+| [infra/gcs_bucket_structure.md](infra/gcs_bucket_structure.md) | GCS paths and DuckDB usage |
+| [infra/asset_registry.md](infra/asset_registry.md) | Registry schema for site dropdown and defaults |
 | `scripts/README.md` | Run instructions and architecture summary |
 
 ---
