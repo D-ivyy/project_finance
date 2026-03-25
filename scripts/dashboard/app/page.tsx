@@ -212,16 +212,20 @@ export default function DashboardPage() {
     [siteData?.monthly_paths]
   );
 
+  // ── Forecast start date (calendar anchor for all views) ─────────────────────
+  const forecastStartMonth = siteData?.forecast_start_month ?? 1;
+  const forecastStartYear = siteData?.forecast_start_year ?? new Date().getFullYear();
+
   // ── Main computation ──────────────────────────────────────────────────────────
   const computed: ComputedFinancials | null = useMemo(() => {
     if (!asset || simulatedRevenue.length === 0 || isBlocked) return null;
     try {
-      return computeFinancials(simulatedRevenue, asset, loan, opexOverride, minDscrOverride, quarterlyRevPcts);
+      return computeFinancials(simulatedRevenue, asset, loan, opexOverride, minDscrOverride, quarterlyRevPcts, forecastStartYear);
     } catch (e) {
       console.error("Computation error:", e);
       return null;
     }
-  }, [asset, simulatedRevenue, loan, opexOverride, minDscrOverride, isBlocked, quarterlyRevPcts]);
+  }, [asset, simulatedRevenue, loan, opexOverride, minDscrOverride, isBlocked, quarterlyRevPcts, forecastStartYear]);
 
   // ── Cross-control validation (post-compute) ───────────────────────────────────
   const crossMsgs = useMemo(() => {
@@ -243,7 +247,6 @@ export default function DashboardPage() {
   );
 
   // ── Forward 12-month view data ─────────────────────────────────────────────────
-  const forecastStartMonth = siteData?.forecast_start_month ?? 1;
   const monthlyViewData = useMemo(() => {
     if (!computed || !monthlyRevPcts) return null;
     const annualDS = computed.loanSchedule[0]?.debtService ?? 0;
@@ -252,9 +255,10 @@ export default function DashboardPage() {
       computed.annualOpex,
       annualDS,
       computed.minDscr,
-      forecastStartMonth
+      forecastStartMonth,
+      forecastStartYear
     );
-  }, [computed, monthlyRevPcts, forecastStartMonth]);
+  }, [computed, monthlyRevPcts, forecastStartMonth, forecastStartYear]);
 
   const pathCount = simulatedRevenue.length;
 
@@ -376,6 +380,7 @@ uvicorn main:app --port 8001 --reload`}
                     quarterlyData={computed.quarterlyData}
                     monthlyViewData={monthlyViewData}
                     forecastStartMonth={forecastStartMonth}
+                    forecastStartYear={forecastStartYear}
                   />
                 ) : (
                   <Skeleton className="h-[380px]" />
@@ -401,6 +406,7 @@ uvicorn main:app --port 8001 --reload`}
                     assetType={asset?.asset_type ?? "unknown"}
                     loanConfig={loan}
                     computed={computed}
+                    forecastStartYear={forecastStartYear}
                   />
                 ) : (
                   <Skeleton className="h-64" />

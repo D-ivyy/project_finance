@@ -2,7 +2,7 @@
 
 import type { ComputedFinancials } from "@/types";
 import { fmtDscr, fmtMillion } from "@/lib/api";
-import { TrendingUp, CheckCircle, XCircle, Scale } from "lucide-react";
+import { TrendingUp, CheckCircle, XCircle, Scale, Landmark } from "lucide-react";
 
 interface KpiCardsProps {
   data: ComputedFinancials;
@@ -83,6 +83,9 @@ export function KpiCards({ data }: KpiCardsProps) {
     covenantStatus,
     breachCount,
     dscrTable,
+    ltv,
+    assetValue,
+    loanSchedule,
   } = data;
 
   const headroom = minDscrValue - minDscr;
@@ -139,6 +142,36 @@ export function KpiCards({ data }: KpiCardsProps) {
             <XCircle size={14} />
           )
         }
+      />
+
+      {/* Card 4: LTV (Loan-to-Value) */}
+      <KpiCard
+        label="LTV"
+        value={ltv != null ? `${(ltv * 100).toFixed(1)}%` : "N/A"}
+        sub={
+          ltv != null && assetValue
+            ? `Loan: ${fmtMillion(loanSchedule[0]?.openingBalance ?? 0)} / Value: ${fmtMillion(assetValue)}`
+            : "Asset value unavailable"
+        }
+        detail={
+          ltv != null
+            ? ltv <= 0.6
+              ? "Conservative gearing"
+              : ltv <= 0.75
+                ? "Moderate leverage"
+                : "High leverage risk"
+            : "Requires capacity & asset type"
+        }
+        color={
+          ltv == null
+            ? "blue"
+            : ltv <= 0.6
+              ? "green"
+              : ltv <= 0.75
+                ? "amber"
+                : "red"
+        }
+        icon={<Landmark size={14} />}
       />
     </div>
   );

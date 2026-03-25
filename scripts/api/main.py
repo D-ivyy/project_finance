@@ -73,6 +73,7 @@ class SiteDataResponse(BaseModel):
     kind: str
     market: str
     forecast_start_month: int  # 1-12, calendar month the forecast window begins
+    forecast_start_year: int   # 4-digit calendar year the forecast window begins (e.g. 2026)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ async def get_revenue(
     """
     try:
         asset_meta = load_asset_metadata(site_slug)
-        annual_paths, monthly_paths, forecast_start_month = load_revenue_data(site_slug, kind, market)
+        annual_paths, monthly_paths, forecast_start_month, forecast_start_year = load_revenue_data(site_slug, kind, market)
         return {
             "asset": {
                 "asset_slug": asset_meta["asset_slug"],
@@ -114,6 +115,7 @@ async def get_revenue(
             "kind": kind,
             "market": market,
             "forecast_start_month": forecast_start_month,
+            "forecast_start_year": forecast_start_year,
         }
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

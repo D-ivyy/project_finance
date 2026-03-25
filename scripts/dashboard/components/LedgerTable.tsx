@@ -27,6 +27,7 @@ interface LedgerTableProps {
   assetType: string;
   loanConfig: LoanConfig;
   computed: ComputedFinancials;
+  forecastStartYear: number;
 }
 
 // ── DSCR cell coloring ────────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ export function LedgerTable({
   assetType,
   loanConfig,
   computed,
+  forecastStartYear,
 }: LedgerTableProps) {
   const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
 
@@ -175,7 +177,7 @@ export function LedgerTable({
               <React.Fragment key={row.year}>
                 {/* Main row */}
                 <tr className="hover:bg-[var(--color-surface-hover)] transition-colors">
-                  <Td muted>{row.year}</Td>
+                  <Td muted>{forecastStartYear + row.year - 1}</Td>
                   <Td right>{fmtMillion(revenue)}</Td>
                   <Td right muted>{fmtMillion(annualOpex)}</Td>
                   <Td right>{fmtMillion(cfads)}</Td>
@@ -201,7 +203,7 @@ export function LedgerTable({
                   <td className="px-3 py-1.5 text-center border-b border-[var(--color-border-subtle)]">
                     <button
                       onClick={() => handleYearExport(row.year)}
-                      title={`Download Year ${row.year} detail CSV`}
+                      title={`Download ${forecastStartYear + row.year - 1} (Year ${row.year}) detail CSV`}
                       className="text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
                     >
                       <Download size={13} />

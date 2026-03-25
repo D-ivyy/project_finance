@@ -20,6 +20,14 @@ const OPEX_PER_MW: Record<string, number> = {
   battery: 40_000, // $/MW-yr
 };
 
+// ── CapEx defaults (NREL ATB 2024 moderate) ──────────────────────────────────
+
+const CAPEX_PER_MW: Record<string, number> = {
+  solar:   1_200_000, // $1.2M/MW — utility-scale PV
+  wind:    1_500_000, // $1.5M/MW — onshore wind
+  battery: 1_800_000, // $1.8M/MW — 4hr Li-ion BESS
+};
+
 const MIN_DSCR_BY_TYPE: Record<string, number> = {
   solar: 1.25,
   wind: 1.35,
@@ -55,6 +63,25 @@ export function resolveMinDscr(
   return {
     value: val,
     source: `${asset.asset_type} default — Norton Rose Fulbright 2024`,
+  };
+}
+
+// ── LTV (Loan-to-Value) ──────────────────────────────────────────────────────
+
+export function resolveAssetValue(
+  asset: AssetMeta,
+  principal: number
+): { ltv: number | null; assetValue: number | null; source: string } {
+  if (!asset.ac_capacity_mw || !(asset.asset_type in CAPEX_PER_MW)) {
+    return { ltv: null, assetValue: null, source: "capacity/type unknown" };
+  }
+  const assetValue = asset.ac_capacity_mw * CAPEX_PER_MW[asset.asset_type];
+  const ltv = principal / assetValue;
+  const rate = CAPEX_PER_MW[asset.asset_type] / 1e6;
+  return {
+    ltv,
+    assetValue,
+    source: `${asset.ac_capacity_mw.toFixed(0)}MW × $${rate.toFixed(1)}M/MW — NREL ATB 2024`,
   };
 }
 
@@ -167,7 +194,8 @@ export function computeQuarterlyData(
   annualOpex: number,
   annualCfadsPcts: PercentileMap,      // correct annual CFADS percentiles (from computeFinancials)
   loanSchedule: LoanScheduleRow[],
-  minDscr: number
+  minDscr: number,
+  startYear: number = 2026             // calendar year of Year 1
 ): QuarterlyPoint[] {
   const keys: PercentileKey[] = ["P10", "P25", "P50", "P75", "P90"];
   const quarterlyOpex = annualOpex / 4;
@@ -175,6 +203,7 @@ export function computeQuarterlyData(
 
   for (const row of loanSchedule) {
     const quarterlyDS = row.debtService / 4;
+    const calYear = startYear + row.year - 1; // Year 1 → startYear, Year 2 → startYear+1, ...
 
     // LTM DSCR uses the correctly-computed annual CFADS percentiles.
     // Sum-of-quarterly-percentiles != percentile-of-annual-sum, so we must
@@ -192,10 +221,12 @@ export function computeQuarterlyData(
         qCfads[k] = qRevPcts[k] - quarterlyOpex;
       }
 
+      const yr2 = String(calYear).slice(-2); // e.g. "26"
       points.push({
         year: row.year,
         quarter: q + 1,
-        label: `Q${q + 1}-Y${row.year}`,
+        calYear,
+        label: `Q${q + 1} '${yr2}`,
         revenue: qRevPcts,
         cfads: qCfads,
         debtService: quarterlyDS,
@@ -223,21 +254,29 @@ const MONTH_NAMES = [
  * annualDS:       annual debt service for Year 1 ($)
  * minDscr:        covenant minimum
  * startMonth:     1-12, calendar month when the forecast window begins (e.g. 2 = Feb)
+ * startYear:      4-digit calendar year (e.g. 2026)
  *
  * The x-axis starts at startMonth and wraps around the year.
  * Example: startMonth=2 → x-axis = [Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec, Jan]
  *
- * Returns { monthlyPoints, quarterBlocks }:
- *   monthlyPoints: 12 MonthlyViewPoint objects in forecast order
- *   quarterBlocks: 4 ForwardQuarterBlock objects, each covering 3 consecutive months
- *                  in the forecast window, colored by quarterly DSCR (not LTM)
+ * Quarter blocks use STANDARD CALENDAR QUARTERS (Q1=Jan-Mar, Q2=Apr-Jun, etc.).
+ * Partial quarters at the edges of the 12-month window are shown with their actual
+ * month count and proportional width.
+ *
+ * Example: startMonth=3 (March), startYear=2026:
+ *   Block 0: Q1'26 (Mar only, 1 month, partial)
+ *   Block 1: Q2'26 (Apr-Jun, 3 months, full)
+ *   Block 2: Q3'26 (Jul-Sep, 3 months, full)
+ *   Block 3: Q4'26 (Oct-Dec, 3 months, full)
+ *   Block 4: Q1'27 (Jan-Feb, 2 months, partial)
  */
 export function computeMonthlyViewData(
   monthlyRevPcts: PercentileMap[],  // length 12, index 0 = Jan
   annualOpex: number,
   annualDS: number,
   minDscr: number,
-  startMonth: number                // 1-12
+  startMonth: number,               // 1-12
+  startYear: number = 2026          // 4-digit calendar year
 ): { monthlyPoints: MonthlyViewPoint[]; quarterBlocks: ForwardQuarterBlock[] } {
   const keys: PercentileKey[] = ["P10", "P25", "P50", "P75", "P90"];
   const monthlyOpex = annualOpex / 12;
@@ -262,35 +301,64 @@ export function computeMonthlyViewData(
     });
   }
 
-  // Build 4 quarter blocks (3 months each) — DSCR = quarterly CFADS / quarterly DS
-  // Quarters are based on forecast position, not calendar: Q1=pos 0-2, Q2=3-5, Q3=6-8, Q4=9-11
-  const quarterlyDS = annualDS / 4;
+  // Build calendar quarter blocks — group months by their actual calendar quarter.
+  // Calendar quarter: Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec
+  // Months at the edges may form partial quarters (< 3 months).
   const quarterBlocks: ForwardQuarterBlock[] = [];
+  let blockIdx = 0;
+  let i = 0;
 
-  for (let q = 0; q < 4; q++) {
-    const startPos = q * 3;
-    const endPos = startPos + 2;
+  while (i < 12) {
+    const calMonth = monthlyPoints[i].calMonth;
+    const calQ = Math.ceil(calMonth / 3);  // 1-4
+    // Determine the calendar year for this month
+    const calYear = calMonth >= startMonth
+      ? startYear
+      : startYear + 1; // months that wrapped into next year
 
-    // Sum the 3 months' CFADS per percentile
+    // Collect all consecutive months in this calendar quarter
+    const blockStart = i;
+    while (i < 12) {
+      const nextCM = monthlyPoints[i].calMonth;
+      const nextQ = Math.ceil(nextCM / 3);
+      const nextYear = nextCM >= startMonth ? startYear : startYear + 1;
+      if (nextQ !== calQ || nextYear !== calYear) break;
+      i++;
+    }
+    const blockEnd = i - 1;
+    const monthCount = blockEnd - blockStart + 1;
+
+    // Sum CFADS across months in this block
     const qCfads: PercentileMap = {} as PercentileMap;
     for (const k of keys) {
-      qCfads[k] = monthlyPoints[startPos].cfads[k]
-                + monthlyPoints[startPos + 1].cfads[k]
-                + monthlyPoints[startPos + 2].cfads[k];
+      let sum = 0;
+      for (let m = blockStart; m <= blockEnd; m++) {
+        sum += monthlyPoints[m].cfads[k];
+      }
+      qCfads[k] = sum;
     }
 
-    // Quarterly DSCR = quarterly CFADS / quarterly DS
+    // DSCR for this block = block CFADS / (monthlyDS × monthCount)
+    const blockDS = monthlyDS * monthCount;
     const dscr: PercentileMap = {} as PercentileMap;
     for (const k of keys) {
-      dscr[k] = quarterlyDS > 0 ? qCfads[k] / quarterlyDS : 0;
+      dscr[k] = blockDS > 0 ? qCfads[k] / blockDS : 0;
     }
 
-    // Build a human-readable label e.g. "Q1 (Feb–Apr)"
-    const m1 = monthlyPoints[startPos].monthName;
-    const m3 = monthlyPoints[endPos].monthName;
-    const label = `Q${q + 1} (${m1}–${m3})`;
+    const yr2 = String(calYear).slice(-2);
+    const label = `Q${calQ} '${yr2}`;
 
-    quarterBlocks.push({ quarterIndex: q, label, startPos, endPos, dscr });
+    quarterBlocks.push({
+      quarterIndex: blockIdx,
+      calQuarter: calQ,
+      calYear,
+      label,
+      monthCount,
+      startPos: blockStart,
+      endPos: blockEnd,
+      dscr,
+    });
+    blockIdx++;
   }
 
   void minDscr; // available for caller; not used in computation directly
@@ -304,7 +372,8 @@ export function computeFinancials(
   loanConfig: LoanConfig,
   opexOverride: number | null,
   minDscrOverride: number | null,
-  quarterlyRevPcts?: PercentileMap[] | null // optional: from computeQuarterlyPercentiles
+  quarterlyRevPcts?: PercentileMap[] | null, // optional: from computeQuarterlyPercentiles
+  startYear: number = 2026                    // calendar year of forecast start
 ): ComputedFinancials {
   const { value: annualOpex } = resolveOpex(asset, opexOverride);
   const { value: minDscr } = resolveMinDscr(asset, minDscrOverride);
@@ -362,8 +431,11 @@ export function computeFinancials(
   // Quarterly data (requires monthly paths; empty array if not available)
   const quarterlyData =
     quarterlyRevPcts && quarterlyRevPcts.length === 4
-      ? computeQuarterlyData(quarterlyRevPcts, annualOpex, pctCfads, loanSchedule, minDscr)
+      ? computeQuarterlyData(quarterlyRevPcts, annualOpex, pctCfads, loanSchedule, minDscr, startYear)
       : [];
+
+  // LTV
+  const { ltv, assetValue } = resolveAssetValue(asset, loanConfig.principal);
 
   return {
     annualOpex,
@@ -380,5 +452,7 @@ export function computeFinancials(
     debtCfadsRatio,
     covenantStatus: breachCount === 0 ? "pass" : "breach",
     breachCount,
+    ltv,
+    assetValue,
   };
 }
