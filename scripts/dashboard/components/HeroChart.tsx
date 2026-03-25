@@ -1,20 +1,45 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, Fragment } from "react";
+import { ChevronRight } from "lucide-react";
+import * as echarts from "echarts/core";
+import { LineChart, CustomChart } from "echarts/charts";
+import {
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+} from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import type { ECharts } from "echarts/core";
+
 import type {
   DscrRow,
   LoanScheduleRow,
   PercentileMap,
-  PercentileKey,
   QuarterlyPoint,
   MonthlyViewPoint,
   ForwardQuarterBlock,
 } from "@/types";
-import { fmtDscr, fmtMillion } from "@/lib/api";
+import { getChartPalette } from "@/lib/echarts-theme";
+import {
+  buildLifecycleOption,
+  build3YearOption,
+  buildForward12MOption,
+  buildAnnualFallbackOption,
+} from "@/lib/hero-chart-options";
 
-const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
+// Register ECharts modules (tree-shaken)
+echarts.use([
+  LineChart,
+  CustomChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  CanvasRenderer,
+]);
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface HeroChartProps {
   dscrTable: DscrRow[];
@@ -23,424 +48,31 @@ interface HeroChartProps {
   annualOpex: number;
   minDscr: number;
   quarterlyData?: QuarterlyPoint[];
-  // 12-month forward view props
-  monthlyViewData?: { monthlyPoints: MonthlyViewPoint[]; quarterBlocks: ForwardQuarterBlock[] } | null;
-  forecastStartMonth?: number; // 1-12
+  monthlyViewData?: {
+    monthlyPoints: MonthlyViewPoint[];
+    quarterBlocks: ForwardQuarterBlock[];
+  } | null;
+  forecastStartMonth?: number;
+  forecastStartYear?: number;
 }
 
-// ── Continuous risk gradient (P10 LTM DSCR vs covenant) ─────────────────────
+type ViewMode = "lifecycle" | "3year" | "forward12m";
 
-interface ColorStop { t: number; r: number; g: number; b: number }
-
-const DARK_STOPS: ColorStop[] = [
-  { t: 0.00, r: 248, g: 81,  b: 73  }, // #f85149  severe breach
-  { t: 0.20, r: 235, g: 130, b: 50  }, // orange   moderate breach
-  { t: 0.35, r: 210, g: 153, b: 34  }, // #d29922  amber — near threshold
-  { t: 0.60, r: 63,  g: 185, b: 80  }, // #3fb950  comfortable
-  { t: 1.00, r: 35,  g: 134, b: 54  }, // #238636  very safe
-];
-const LIGHT_STOPS: ColorStop[] = [
-  { t: 0.00, r: 207, g: 34,  b: 46  }, // #cf222e  severe breach
-  { t: 0.20, r: 217, g: 119, b: 6   }, // #d97706  orange
-  { t: 0.35, r: 191, g: 135, b: 0   }, // #bf8700  amber
-  { t: 0.60, r: 45,  g: 164, b: 78  }, // #2da44e  comfortable
-  { t: 1.00, r: 26,  g: 127, b: 55  }, // #1a7f37  very safe
+const VIEW_BUTTONS: {
+  key: ViewMode;
+  label: string;
+}[] = [
+  { key: "forward12m", label: "Forward 12M" },
+  { key: "3year", label: "3-Year" },
+  { key: "lifecycle", label: "Project Lifecycle" },
 ];
 
-function lerpStops(stops: ColorStop[], t: number): string {
-  const tc = Math.max(0, Math.min(1, t));
-  let lo = stops[0], hi = stops[stops.length - 1];
-  for (let i = 0; i < stops.length - 1; i++) {
-    if (tc >= stops[i].t && tc <= stops[i + 1].t) {
-      lo = stops[i];
-      hi = stops[i + 1];
-      break;
-    }
-  }
-  const s = hi.t === lo.t ? 0 : (tc - lo.t) / (hi.t - lo.t);
-  const r = Math.round(lo.r + (hi.r - lo.r) * s);
-  const g = Math.round(lo.g + (hi.g - lo.g) * s);
-  const b = Math.round(lo.b + (hi.b - lo.b) * s);
-  return `rgb(${r},${g},${b})`;
-}
-
-function dscrToT(dscr: number, minDscr: number): number {
-  const floor = minDscr - 0.30;
-  const ceiling = minDscr + 0.75;
-  return (dscr - floor) / (ceiling - floor);
-}
-
-function riskColor(dscr: number, minDscr: number, isDark: boolean): string {
-  return lerpStops(isDark ? DARK_STOPS : LIGHT_STOPS, dscrToT(dscr, minDscr));
-}
-
-function riskOpacity(dscr: number, minDscr: number): number {
-  const t = Math.max(0, Math.min(1, dscrToT(dscr, minDscr)));
-  return 0.22 - t * 0.17; // breach → 0.22, very safe → 0.05
-}
-
-function dscrMark(dscr: number, minDscr: number): string {
-  return dscr >= minDscr ? "✓" : "✗";
-}
-
-const RISK_BANDS: { y0: number; y1: number; key: PercentileKey }[] = [
-  { y0: 0.0, y1: 0.2, key: "P10" },
-  { y0: 0.2, y1: 0.4, key: "P25" },
-  { y0: 0.4, y1: 0.6, key: "P50" },
-  { y0: 0.6, y1: 0.8, key: "P75" },
-  { y0: 0.8, y1: 1.0, key: "P90" },
+const MONTH_NAMES_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-// ── Annual fallback (when no monthly data) ────────────────────────────────────
-
-function buildAnnualTraces(
-  dscrTable: DscrRow[],
-  loanSchedule: LoanScheduleRow[],
-  pctCfads: PercentileMap,
-  annualOpex: number,
-  minDscr: number,
-  isDark: boolean,
-  accent: string,
-  accentMuted: string,
-  warningColor: string,
-  mutedLine: string,
-  paperBg: string,
-  gridColor: string,
-  fontColor: string
-) {
-  const years = dscrTable.map((r) => r.year);
-  const toM = (v: number) => v / 1e6;
-
-  const heatmapShapes = dscrTable.flatMap((row) =>
-    RISK_BANDS.map((band) => {
-      const dscr = row.dscr[band.key];
-      return {
-        type: "rect" as const,
-        xref: "x" as const,
-        yref: "paper" as const,
-        x0: row.year - 0.5,
-        x1: row.year + 0.5,
-        y0: band.y0,
-        y1: band.y1,
-        fillcolor: riskColor(dscr, minDscr, isDark),
-        opacity: riskOpacity(dscr, minDscr),
-        line: { width: 0 },
-        layer: "below" as const,
-      };
-    })
-  );
-
-  const cfadsP10 = years.map(() => toM(pctCfads.P10));
-  const cfadsP25 = years.map(() => toM(pctCfads.P25));
-  const cfadsP50 = years.map(() => toM(pctCfads.P50));
-  const cfadsP75 = years.map(() => toM(pctCfads.P75));
-  const cfadsP90 = years.map(() => toM(pctCfads.P90));
-  const dsArr = loanSchedule.map((r) => toM(r.debtService));
-
-  const cfadsHover = dscrTable.map((row) =>
-    `<b>Year ${row.year}</b><br>` +
-    `Revenue (P50): $${toM(pctCfads.P50 + annualOpex).toFixed(2)}M<br>` +
-    `OpEx: $${toM(annualOpex).toFixed(2)}M<br>` +
-    `CFADS (P50): $${toM(pctCfads.P50).toFixed(2)}M`
-  );
-
-  const dsHover = loanSchedule.map((r) =>
-    `<b>Year ${r.year}</b><br>` +
-    `Debt Service: ${fmtMillion(r.debtService)}<br>` +
-    `Interest: ${fmtMillion(r.interest)}<br>` +
-    `Principal: ${fmtMillion(r.principal)}`
-  );
-
-  const bgHoverText = dscrTable.map((row) => {
-    const pass = row.dscr.P10 >= minDscr;
-    return (
-      `<b>Year ${row.year} — LTM DSCR</b><br>` +
-      `P10: ${fmtDscr(row.dscr.P10)} ${dscrMark(row.dscr.P10, minDscr)}<br>` +
-      `P25: ${fmtDscr(row.dscr.P25)} ${dscrMark(row.dscr.P25, minDscr)}<br>` +
-      `P50: ${fmtDscr(row.dscr.P50)} ${dscrMark(row.dscr.P50, minDscr)}<br>` +
-      `P75: ${fmtDscr(row.dscr.P75)} ${dscrMark(row.dscr.P75, minDscr)}<br>` +
-      `P90: ${fmtDscr(row.dscr.P90)} ${dscrMark(row.dscr.P90, minDscr)}<br>` +
-      `DS: ${fmtMillion(row.debtService)} · CFADS: ${fmtMillion(row.cfads.P50)}<br>` +
-      `Covenant (${minDscr.toFixed(2)}x): <b>${pass ? "PASS" : "BREACH"}</b>`
-    );
-  });
-
-  const bgHoverY = years.map(() => toM(pctCfads.P90) * 0.12);
-
-  const traces = [
-    { x: years, y: cfadsP10, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent" }, showlegend: false, hoverinfo: "skip" as const, name: "_p10" },
-    { x: years, y: cfadsP90, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.10)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine }, name: "CFADS P10–P90", hoverinfo: "skip" as const },
-    { x: years, y: cfadsP25, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent" }, showlegend: false, hoverinfo: "skip" as const, name: "_p25" },
-    { x: years, y: cfadsP75, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.22)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine }, name: "CFADS IQR", hoverinfo: "skip" as const },
-    { x: years, y: cfadsP50, type: "scatter" as const, mode: "lines+markers" as const,
-      line: { width: 2.5, color: accent }, marker: { size: 5, color: accent },
-      name: "CFADS P50", text: cfadsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: years, y: dsArr, type: "scatter" as const, mode: "lines+markers" as const,
-      line: { width: 2.2, color: warningColor },
-      marker: { size: 5, color: warningColor, symbol: "diamond" as const },
-      name: "Debt Service", text: dsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: years, y: bgHoverY, type: "scatter" as const, mode: "markers" as const,
-      marker: { size: 20, color: "rgba(0,0,0,0)", line: { width: 0 } },
-      name: "LTM DSCR Detail", showlegend: false,
-      text: bgHoverText, hovertemplate: "%{text}<extra></extra>",
-      hoverlabel: { bgcolor: paperBg, bordercolor: gridColor, font: { color: fontColor, size: 11 } } },
-  ];
-
-  return { traces, heatmapShapes, xaxis: { tickmode: "linear" as const, dtick: 2, range: [years[0] - 0.5, years[years.length - 1] + 0.5], autorange: false } };
-}
-
-// ── Quarterly chart builder ────────────────────────────────────────────────────
-
-function buildQuarterlyTraces(
-  quarterlyData: QuarterlyPoint[],
-  minDscr: number,
-  isDark: boolean,
-  accent: string,
-  accentMuted: string,
-  warningColor: string,
-  mutedLine: string,
-  paperBg: string,
-  gridColor: string,
-  fontColor: string
-) {
-  const toM = (v: number) => v / 1e6;
-  const labels = quarterlyData.map((p) => p.label);
-
-  const heatmapShapes = quarterlyData.flatMap((p, i) =>
-    RISK_BANDS.map((band) => {
-      const dscr = p.ltmDscr[band.key];
-      return {
-        type: "rect" as const,
-        xref: "x" as const,
-        yref: "paper" as const,
-        x0: i - 0.5,
-        x1: i + 0.5,
-        y0: band.y0,
-        y1: band.y1,
-        fillcolor: riskColor(dscr, minDscr, isDark),
-        opacity: riskOpacity(dscr, minDscr),
-        line: { width: 0 },
-        layer: "below" as const,
-      };
-    })
-  );
-
-  const cfadsP10 = quarterlyData.map((p) => toM(p.cfads.P10));
-  const cfadsP25 = quarterlyData.map((p) => toM(p.cfads.P25));
-  const cfadsP50 = quarterlyData.map((p) => toM(p.cfads.P50));
-  const cfadsP75 = quarterlyData.map((p) => toM(p.cfads.P75));
-  const cfadsP90 = quarterlyData.map((p) => toM(p.cfads.P90));
-  const dsArr = quarterlyData.map((p) => toM(p.debtService));
-
-  const cfadsHover = quarterlyData.map((p) =>
-    `<b>${p.label}</b><br>` +
-    `CFADS P50: $${toM(p.cfads.P50).toFixed(2)}M<br>` +
-    `CFADS range: $${toM(p.cfads.P10).toFixed(2)}M – $${toM(p.cfads.P90).toFixed(2)}M`
-  );
-
-  const dsHover = quarterlyData.map((p) =>
-    `<b>${p.label}</b><br>` +
-    `Quarterly DS: $${toM(p.debtService).toFixed(2)}M<br>` +
-    `Annual DS: $${(toM(p.debtService) * 4).toFixed(2)}M`
-  );
-
-  const bgHoverText = quarterlyData.map((p) => {
-    const pass = p.ltmDscr.P10 >= minDscr;
-    return (
-      `<b>${p.label} — LTM DSCR (trailing 12m)</b><br>` +
-      `P10: ${fmtDscr(p.ltmDscr.P10)} ${dscrMark(p.ltmDscr.P10, minDscr)}<br>` +
-      `P25: ${fmtDscr(p.ltmDscr.P25)} ${dscrMark(p.ltmDscr.P25, minDscr)}<br>` +
-      `P50: ${fmtDscr(p.ltmDscr.P50)} ${dscrMark(p.ltmDscr.P50, minDscr)}<br>` +
-      `P75: ${fmtDscr(p.ltmDscr.P75)} ${dscrMark(p.ltmDscr.P75, minDscr)}<br>` +
-      `P90: ${fmtDscr(p.ltmDscr.P90)} ${dscrMark(p.ltmDscr.P90, minDscr)}<br>` +
-      `Covenant (${minDscr.toFixed(2)}x): <b>${pass ? "PASS" : "BREACH"}</b>`
-    );
-  });
-
-  const bgHoverY = quarterlyData.map((p) => toM(p.cfads.P90) * 0.12);
-
-  // X-axis: show only Q1 labels (year labels) to avoid crowding
-  const tickvals: number[] = [];
-  const ticktext: string[] = [];
-  quarterlyData.forEach((p, i) => {
-    if (p.quarter === 1) {
-      tickvals.push(i);
-      ticktext.push(`Y${p.year}`);
-    }
-  });
-
-  const xIndices = quarterlyData.map((_, i) => i);
-
-  const spline = "spline" as const;
-
-  const traces = [
-    { x: xIndices, y: cfadsP10, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent", shape: spline, smoothing: 1.0 }, showlegend: false, hoverinfo: "skip" as const, name: "_p10" },
-    { x: xIndices, y: cfadsP90, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.10)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine, shape: spline, smoothing: 1.0 }, name: "CFADS P10–P90", hoverinfo: "skip" as const },
-    { x: xIndices, y: cfadsP25, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent", shape: spline, smoothing: 1.0 }, showlegend: false, hoverinfo: "skip" as const, name: "_p25" },
-    { x: xIndices, y: cfadsP75, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.22)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine, shape: spline, smoothing: 1.0 }, name: "CFADS IQR", hoverinfo: "skip" as const },
-    { x: xIndices, y: cfadsP50, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 2.5, color: accent, shape: spline, smoothing: 1.0 },
-      name: "CFADS P50", text: cfadsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: xIndices, y: dsArr, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 2.2, color: warningColor },
-      name: "Debt Service", text: dsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: xIndices, y: bgHoverY, type: "scatter" as const, mode: "markers" as const,
-      marker: { size: 20, color: "rgba(0,0,0,0)", line: { width: 0 } },
-      name: "LTM DSCR Detail", showlegend: false,
-      text: bgHoverText, hovertemplate: "%{text}<extra></extra>",
-      hoverlabel: { bgcolor: paperBg, bordercolor: gridColor, font: { color: fontColor, size: 11 } } },
-  ];
-
-  void labels; // used only for reference
-
-  return {
-    traces,
-    heatmapShapes,
-    xaxis: {
-      tickmode: "array" as const,
-      tickvals,
-      ticktext,
-      range: [-0.5, xIndices.length - 0.5],
-      autorange: false,
-    },
-  };
-}
-
-// ── Monthly forward-looking chart builder ─────────────────────────────────────
-
-function buildMonthlyTraces(
-  monthlyPoints: MonthlyViewPoint[],
-  quarterBlocks: ForwardQuarterBlock[],
-  minDscr: number,
-  isDark: boolean,
-  accent: string,
-  accentMuted: string,
-  warningColor: string,
-  mutedLine: string,
-  paperBg: string,
-  gridColor: string,
-  fontColor: string
-) {
-  const toM = (v: number) => v / 1e6;
-  const xIndices = monthlyPoints.map((_, i) => i);
-  const spline = "spline" as const;
-
-  // CFADS bands (monthly)
-  const cfadsP10 = monthlyPoints.map((p) => toM(p.cfads.P10));
-  const cfadsP25 = monthlyPoints.map((p) => toM(p.cfads.P25));
-  const cfadsP50 = monthlyPoints.map((p) => toM(p.cfads.P50));
-  const cfadsP75 = monthlyPoints.map((p) => toM(p.cfads.P75));
-  const cfadsP90 = monthlyPoints.map((p) => toM(p.cfads.P90));
-  const dsArr = monthlyPoints.map((p) => toM(p.debtService));
-
-  const cfadsHover = monthlyPoints.map((p) =>
-    `<b>${p.monthName} (Forward 12M)</b><br>` +
-    `Rev P50: $${toM(p.revenue.P50).toFixed(2)}M<br>` +
-    `CFADS P50: $${toM(p.cfads.P50).toFixed(2)}M<br>` +
-    `Range: $${toM(p.cfads.P10).toFixed(2)}M – $${toM(p.cfads.P90).toFixed(2)}M`
-  );
-
-  const dsHover = monthlyPoints.map((p) =>
-    `<b>${p.monthName}</b><br>` +
-    `Monthly DS: $${toM(p.debtService).toFixed(2)}M<br>` +
-    `Annual DS (Y1): $${(toM(p.debtService) * 12).toFixed(2)}M`
-  );
-
-  // Per-quarter heatmap background — 5 vertical bands × 4 quarters = 20 shapes
-  const heatmapShapes = quarterBlocks.flatMap((block) =>
-    RISK_BANDS.map((band) => {
-      const dscr = block.dscr[band.key];
-      return {
-        type: "rect" as const,
-        xref: "x" as const,
-        yref: "paper" as const,
-        x0: block.startPos - 0.5,
-        x1: block.endPos + 0.5,
-        y0: band.y0,
-        y1: band.y1,
-        fillcolor: riskColor(dscr, minDscr, isDark),
-        opacity: riskOpacity(dscr, minDscr),
-        line: { width: 0 },
-        layer: "below" as const,
-      };
-    })
-  );
-
-  // Invisible hover markers for quarterly tooltip — one per quarter
-  // Place at 12% of the positive chart height; guard against all-negative P90
-  const maxCfadsP90 = Math.max(...cfadsP90, 0.001);
-  const bgHoverX = quarterBlocks.map((b) => (b.startPos + b.endPos) / 2);
-  const bgHoverY = quarterBlocks.map(() => maxCfadsP90 * 0.12);
-
-  const bgHoverText = quarterBlocks.map((block) => {
-    const pass = block.dscr.P10 >= minDscr;
-    return (
-      `<b>${block.label} — Quarterly DSCR</b><br>` +
-      `P10: ${fmtDscr(block.dscr.P10)} ${dscrMark(block.dscr.P10, minDscr)}<br>` +
-      `P25: ${fmtDscr(block.dscr.P25)} ${dscrMark(block.dscr.P25, minDscr)}<br>` +
-      `P50: ${fmtDscr(block.dscr.P50)} ${dscrMark(block.dscr.P50, minDscr)}<br>` +
-      `P75: ${fmtDscr(block.dscr.P75)} ${dscrMark(block.dscr.P75, minDscr)}<br>` +
-      `P90: ${fmtDscr(block.dscr.P90)} ${dscrMark(block.dscr.P90, minDscr)}<br>` +
-      `Covenant (${minDscr.toFixed(2)}x): <b>${pass ? "PASS" : "BREACH"}</b>`
-    );
-  });
-
-  // X-axis: month name labels
-  const tickvals = xIndices;
-  const ticktext = monthlyPoints.map((p) => p.monthName);
-
-  const traces = [
-    { x: xIndices, y: cfadsP10, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent", shape: spline, smoothing: 1.0 }, showlegend: false, hoverinfo: "skip" as const, name: "_p10" },
-    { x: xIndices, y: cfadsP90, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.10)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine, shape: spline, smoothing: 1.0 }, name: "CFADS P10–P90", hoverinfo: "skip" as const },
-    { x: xIndices, y: cfadsP25, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 0, color: "transparent", shape: spline, smoothing: 1.0 }, showlegend: false, hoverinfo: "skip" as const, name: "_p25" },
-    { x: xIndices, y: cfadsP75, type: "scatter" as const, mode: "lines" as const,
-      fill: "tonexty" as const, fillcolor: `${accentMuted}0.22)`,
-      line: { width: 1, dash: "dot" as const, color: mutedLine, shape: spline, smoothing: 1.0 }, name: "CFADS IQR", hoverinfo: "skip" as const },
-    { x: xIndices, y: cfadsP50, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 2.5, color: accent, shape: spline, smoothing: 1.0 },
-      name: "CFADS P50", text: cfadsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: xIndices, y: dsArr, type: "scatter" as const, mode: "lines" as const,
-      line: { width: 2.2, color: warningColor },
-      name: "Monthly DS (Y1)", text: dsHover, hovertemplate: "%{text}<extra></extra>" },
-    { x: bgHoverX, y: bgHoverY, type: "scatter" as const, mode: "markers" as const,
-      marker: { size: 28, color: "rgba(0,0,0,0)", line: { width: 0 } },
-      name: "Quarterly DSCR Detail", showlegend: false,
-      text: bgHoverText, hovertemplate: "%{text}<extra></extra>",
-      hoverlabel: { bgcolor: paperBg, bordercolor: gridColor, font: { color: fontColor, size: 11 } } },
-  ];
-
-  return {
-    traces,
-    heatmapShapes,
-    xaxis: {
-      tickmode: "array" as const,
-      tickvals,
-      ticktext,
-      range: [-0.5, 11.5],
-      autorange: false,
-    },
-  };
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-type ViewMode = "lifecycle" | "forward12m";
+// ── Component ──────────────────────────────────────────────────────────────────
 
 export function HeroChart({
   dscrTable,
@@ -451,166 +83,213 @@ export function HeroChart({
   quarterlyData,
   monthlyViewData,
   forecastStartMonth = 1,
+  forecastStartYear = new Date().getFullYear(),
 }: HeroChartProps) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const echartsRef = useRef<ECharts | null>(null);
   const { resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("lifecycle");
-  useEffect(() => setMounted(true), []);
+  const [viewMode, setViewMode] = useState<ViewMode>("forward12m");
 
-  if (!mounted || dscrTable.length === 0) {
-    return (
-      <div className="w-full h-[380px] flex items-center justify-center text-[var(--color-text-muted)] text-sm">
-        Loading chart…
-      </div>
-    );
-  }
+  // ── Initialize ECharts instance ────────────────────────────────────────────
 
-  const isDark = resolvedTheme === "dark";
-  const paperBg = isDark ? "#161b22" : "#ffffff";
-  const plotBg = isDark ? "#0d1117" : "#fafbfc";
-  const fontColor = isDark ? "#e6edf3" : "#1f2328";
-  const gridColor = isDark ? "#21262d" : "#e8eaed";
-  const axisColor = isDark ? "#8b949e" : "#656d76";
-  const accent = isDark ? "#58a6ff" : "#0969da";
-  const accentMuted = isDark ? "rgba(88,166,255," : "rgba(9,105,218,";
-  const warningColor = isDark ? "#d29922" : "#9a6700";
-  const mutedLine = isDark ? "#6e7681" : "#9da3ab";
+  useEffect(() => {
+    setMounted(true);
+    if (!chartRef.current) return;
 
-  const canShow12m = !!(monthlyViewData && monthlyViewData.monthlyPoints.length === 12);
-  const activeMode: ViewMode = viewMode === "forward12m" && canShow12m ? "forward12m" : "lifecycle";
-  const useQuarterly = (activeMode === "lifecycle") && quarterlyData && quarterlyData.length > 0;
+    const chart = echarts.init(chartRef.current, undefined, {
+      renderer: "canvas",
+    });
+    echartsRef.current = chart;
 
-  let traces: object[];
-  let heatmapShapes: object[];
-  let xaxisExtra: object;
-  let xTitle: string;
+    const ro = new ResizeObserver(() => chart.resize());
+    ro.observe(chartRef.current);
 
-  if (activeMode === "forward12m" && canShow12m) {
-    const built = buildMonthlyTraces(
-      monthlyViewData!.monthlyPoints,
-      monthlyViewData!.quarterBlocks,
-      minDscr, isDark, accent, accentMuted, warningColor, mutedLine, paperBg, gridColor, fontColor
-    );
-    traces = built.traces;
-    heatmapShapes = built.heatmapShapes;
-    xaxisExtra = built.xaxis;
-    xTitle = "Forward 12 Months (monthly)";
-  } else if (useQuarterly) {
-    const built = buildQuarterlyTraces(
-      quarterlyData!, minDscr, isDark, accent, accentMuted, warningColor, mutedLine, paperBg, gridColor, fontColor
-    );
-    traces = built.traces;
-    heatmapShapes = built.heatmapShapes;
-    xaxisExtra = built.xaxis;
-    xTitle = "Loan Year (quarterly)";
-  } else {
-    const built = buildAnnualTraces(
-      dscrTable, loanSchedule, pctCfads, annualOpex, minDscr, isDark, accent, accentMuted, warningColor, mutedLine, paperBg, gridColor, fontColor
-    );
-    traces = built.traces;
-    heatmapShapes = built.heatmapShapes;
-    xaxisExtra = built.xaxis;
-    xTitle = "Loan Year";
-  }
+    return () => {
+      ro.disconnect();
+      chart.dispose();
+      echartsRef.current = null;
+    };
+  }, []);
 
-  const layout = {
-    paper_bgcolor: paperBg,
-    plot_bgcolor: plotBg,
-    height: 380,
-    margin: { t: 16, b: 44, l: 58, r: 20 },
-    shapes: heatmapShapes,
-    font: {
-      family: "JetBrains Mono, Menlo, monospace",
-      color: fontColor,
-      size: 11,
-    },
-    xaxis: {
-      title: {
-        text: xTitle,
-        font: { size: 11, color: axisColor },
-        standoff: 8,
-      },
-      gridcolor: gridColor,
-      linecolor: gridColor,
-      tickfont: { color: axisColor, size: 10 },
-      zeroline: false,
-      ...xaxisExtra,
-    },
-    yaxis: {
-      title: { text: "$M", font: { size: 11, color: axisColor } },
-      tickprefix: "$",
-      ticksuffix: "M",
-      gridcolor: gridColor,
-      linecolor: gridColor,
-      tickfont: { color: axisColor, size: 10 },
-      zeroline: false,
-      rangemode: "tozero" as const,
-    },
-    legend: {
-      orientation: "h" as const,
-      x: 0,
-      y: -0.18,
-      font: { size: 10, color: fontColor },
-      bgcolor: "transparent",
-    },
-    hoverlabel: {
-      bgcolor: paperBg,
-      bordercolor: gridColor,
-      font: { color: fontColor, size: 11, family: "JetBrains Mono, Menlo, monospace" },
-    },
-    showlegend: true,
-  };
+  // ── Determine active view mode ─────────────────────────────────────────────
 
-  const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const canShow12m = !!(
+    monthlyViewData && monthlyViewData.monthlyPoints.length === 12
+  );
+  const canShow3y = !!(quarterlyData && quarterlyData.length >= 12);
+
+  let activeMode: ViewMode = viewMode;
+  if (viewMode === "forward12m" && !canShow12m) activeMode = "lifecycle";
+  if (viewMode === "3year" && !canShow3y) activeMode = "lifecycle";
+
+  const useQuarterly =
+    activeMode === "lifecycle" && quarterlyData && quarterlyData.length > 0;
+
+  // ── Update chart option ────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!echartsRef.current || !mounted || dscrTable.length === 0) return;
+
+    const isDark = resolvedTheme === "dark";
+    const palette = getChartPalette(isDark);
+
+    let option;
+    if (activeMode === "forward12m" && canShow12m) {
+      option = buildForward12MOption(
+        monthlyViewData!.monthlyPoints,
+        monthlyViewData!.quarterBlocks,
+        minDscr,
+        palette,
+        isDark
+      );
+    } else if (activeMode === "3year" && canShow3y) {
+      option = build3YearOption(quarterlyData!, minDscr, palette, isDark);
+    } else if (useQuarterly) {
+      option = buildLifecycleOption(quarterlyData!, minDscr, palette, isDark);
+    } else {
+      option = buildAnnualFallbackOption(
+        dscrTable,
+        loanSchedule,
+        pctCfads,
+        annualOpex,
+        minDscr,
+        palette,
+        isDark,
+        forecastStartYear
+      );
+    }
+
+    echartsRef.current.setOption(option, { notMerge: true });
+  }, [
+    activeMode,
+    resolvedTheme,
+    mounted,
+    quarterlyData,
+    monthlyViewData,
+    dscrTable,
+    loanSchedule,
+    pctCfads,
+    annualOpex,
+    minDscr,
+    canShow12m,
+    canShow3y,
+    useQuarterly,
+    forecastStartYear,
+  ]);
+
+  // ── Helper text ────────────────────────────────────────────────────────────
+
+  const isLoading = !mounted || dscrTable.length === 0;
+
   const startLabel = MONTH_NAMES_SHORT[forecastStartMonth - 1];
+  const yr2 = String(forecastStartYear).slice(-2);
+  let helperText: string;
+  if (activeMode === "forward12m") {
+    helperText = `${startLabel} '${yr2} → +12 months · calendar quarter DSCR heatmap · hover for detail`;
+  } else if (activeMode === "3year") {
+    helperText = `Quarterly CFADS · LTM DSCR heatmap · '${yr2}–'${String(forecastStartYear + 2).slice(-2)}`;
+  } else if (useQuarterly) {
+    helperText = `Quarterly CFADS · LTM DSCR heatmap · '${yr2}–'${String(forecastStartYear + loanSchedule.length - 1).slice(-2)}`;
+  } else {
+    helperText = `Annual CFADS · DSCR risk · '${yr2}–'${String(forecastStartYear + dscrTable.length - 1).slice(-2)}`;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  // Always render the chart <div> so chartRef is available when the init
+  // useEffect fires on first mount.  Loading state is an overlay on top.
 
   return (
-    <div className="plotly-chart w-full">
-      {/* ── View toggle ──────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex rounded overflow-hidden border border-[var(--color-border)] text-[10px] font-semibold">
-          <button
-            onClick={() => setViewMode("lifecycle")}
-            className={`px-3 py-1 transition-colors ${
-              activeMode === "lifecycle"
-                ? "bg-[var(--color-accent)] text-white"
-                : "bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            }`}
-          >
-            Project Lifecycle
-          </button>
-          <button
-            onClick={() => setViewMode("forward12m")}
-            disabled={!canShow12m}
-            className={`px-3 py-1 transition-colors ${
-              activeMode === "forward12m"
-                ? "bg-[var(--color-accent)] text-white"
-                : canShow12m
-                ? "bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                : "bg-transparent text-[var(--color-border)] cursor-not-allowed"
-            }`}
-          >
-            Forward 12M
-          </button>
-        </div>
-        <div className="text-[10px] text-[var(--color-text-muted)]">
-          {activeMode === "forward12m"
-            ? `${startLabel} → +12 months · quarterly DSCR heatmap · hover for detail`
-            : activeMode === "lifecycle" && useQuarterly
-            ? "Quarterly CFADS · background = LTM DSCR · hover for detail"
-            : "Annual CFADS · background = DSCR risk · hover for detail"}
-        </div>
-      </div>
+    <div className="w-full">
+      {/* View toggle + scenario placeholder */}
+      {!isLoading && (
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-3">
+            {/* 3-view toggle with navigation arrows */}
+            <div className="flex items-center rounded overflow-hidden border border-[var(--color-border)] text-[10px] font-semibold">
+              {VIEW_BUTTONS.map(({ key, label }, i) => {
+                const enabled =
+                  key === "lifecycle" ||
+                  (key === "3year" && canShow3y) ||
+                  (key === "forward12m" && canShow12m);
 
-      <Plot
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data={traces as any}
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        layout={layout as any}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: "380px" }}
-        useResizeHandler
-      />
+                const nextBtn = VIEW_BUTTONS[i + 1];
+                const nextEnabled = nextBtn
+                  ? nextBtn.key === "lifecycle" ||
+                    (nextBtn.key === "3year" && canShow3y) ||
+                    (nextBtn.key === "forward12m" && canShow12m)
+                  : false;
+
+                return (
+                  <Fragment key={key}>
+                    <button
+                      onClick={() => setViewMode(key)}
+                      disabled={!enabled}
+                      className={`px-3 py-1 transition-colors ${
+                        activeMode === key
+                          ? "bg-[var(--color-accent)] text-white"
+                          : enabled
+                            ? "bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                            : "bg-transparent text-[var(--color-border)] cursor-not-allowed"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                    {nextBtn && (
+                      <button
+                        onClick={() => nextEnabled && setViewMode(nextBtn.key)}
+                        disabled={!nextEnabled}
+                        className="px-0.5 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title={nextEnabled ? `Switch to ${nextBtn.label}` : ""}
+                      >
+                        <ChevronRight size={10} />
+                      </button>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </div>
+
+            {/* Scenario placeholder (lifecycle only) */}
+            {activeMode === "lifecycle" && (
+              <div className="flex items-center gap-1.5">
+                <select
+                  disabled
+                  className="text-[10px] px-2 py-1 rounded border border-[var(--color-border)] bg-transparent text-[var(--color-text-muted)] cursor-not-allowed opacity-50"
+                  defaultValue="base"
+                >
+                  <option value="base">Scenario: Base</option>
+                  <option value="ssp245">SSP2-4.5</option>
+                  <option value="ssp585">SSP5-8.5</option>
+                </select>
+                <span
+                  className="text-[9px] text-[var(--color-text-muted)] italic"
+                  title="Coming soon — requires LTRisk integration"
+                >
+                  Coming soon
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="text-[10px] text-[var(--color-text-muted)]">
+            {helperText}
+          </div>
+        </div>
+      )}
+
+      {/* Chart container — always rendered so ref is available for echarts.init */}
+      <div className="relative" style={{ width: "100%", height: "380px" }}>
+        <div
+          ref={chartRef}
+          style={{ width: "100%", height: "100%" }}
+        />
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center text-[var(--color-text-muted)] text-sm bg-[var(--color-surface)]">
+            Loading chart…
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -31,6 +31,7 @@ export interface SiteData {
   kind: string;
   market: string;
   forecast_start_month: number; // 1-12, calendar month the 12-month window begins
+  forecast_start_year: number;  // 4-digit calendar year (e.g. 2026)
 }
 
 // ── Loan Configuration ───────────────────────────────────────────────────────
@@ -100,6 +101,9 @@ export interface ComputedFinancials {
   debtCfadsRatio: number; // principal / P50 CFADS Year 1
   covenantStatus: "pass" | "breach";
   breachCount: number;
+  // LTV (Loan-to-Value)
+  ltv: number | null;        // principal / estimated asset value (null if capacity unknown)
+  assetValue: number | null;  // estimated from NREL ATB 2024 CapEx × capacity
 }
 
 // ── Validation ───────────────────────────────────────────────────────────────
@@ -128,9 +132,10 @@ export interface MonthlyStats {
 // ── Quarterly CFADS + LTM DSCR (computed client-side) ────────────────────────
 
 export interface QuarterlyPoint {
-  year: number;             // 1 to tenorYears
-  quarter: number;          // 1-4
-  label: string;            // "Q1-Y1", "Q2-Y1", ...
+  year: number;             // 1 to tenorYears (loan year)
+  quarter: number;          // 1-4 (calendar quarter: Q1=Jan-Mar, Q2=Apr-Jun, ...)
+  calYear: number;          // concrete calendar year (e.g. 2026, 2027, ...)
+  label: string;            // "Q1 '26", "Q2 '26", ...
   revenue: PercentileMap;   // quarterly revenue percentiles ($)
   cfads: PercentileMap;     // quarterly CFADS percentiles ($ = revenue - opex/4)
   debtService: number;      // quarterly DS (annual DS / 4)
@@ -150,9 +155,12 @@ export interface MonthlyViewPoint {
 
 // One block per calendar quarter within the 12-month window
 export interface ForwardQuarterBlock {
-  quarterIndex: number;     // 0-3
-  label: string;            // e.g. "Q1 (Feb–Apr)"
+  quarterIndex: number;     // 0-based position in the 12-month window
+  calQuarter: number;       // 1-4 (calendar quarter: Q1=Jan-Mar, Q2=Apr-Jun, ...)
+  calYear: number;          // concrete calendar year (e.g. 2026)
+  label: string;            // e.g. "Q1 '26" or "Q2 '26"
+  monthCount: number;       // number of months in this block (1-3, partial at edges)
   startPos: number;         // x-axis start position (0-11)
-  endPos: number;           // x-axis end position (2-11)
-  dscr: PercentileMap;      // quarterly DSCR at each percentile
+  endPos: number;           // x-axis end position (0-11)
+  dscr: PercentileMap;      // quarterly DSCR at each percentile (using actual months)
 }

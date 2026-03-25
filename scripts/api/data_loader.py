@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime
 from typing import Optional
 
 import duckdb
@@ -103,13 +104,14 @@ def load_revenue_data(
     site_slug: str,
     kind: str = "hub",
     market: str = "da",
-) -> tuple[list[dict], list[dict], int]:
+) -> tuple[list[dict], list[dict], int, int]:
     """
-    Download revenue.duckdb for a site, return (annual_paths, monthly_paths, forecast_start_month).
+    Download revenue.duckdb for a site, return (annual_paths, monthly_paths, forecast_start_month, forecast_start_year).
 
     annual_paths: list of rows from the `annual` table
     monthly_paths: list of rows from the `monthly` table (empty if no such table)
     forecast_start_month: 1-12, calendar month of the first month in the forecast window
+    forecast_start_year: 4-digit calendar year of the forecast start (e.g. 2026)
     """
     gcs_path = f"aggregated_data/{site_slug}/revenue.duckdb"
     client = _gcs_client()
@@ -148,6 +150,7 @@ def load_revenue_data(
         #   monthly_revenue_usd, kind, market, eligible_for_rev_dist
         monthly_df = pd.DataFrame()
         forecast_start_month = 1  # default; overwritten when monthly data exists
+        forecast_start_year = datetime.now().year  # default; overwritten when monthly data exists
         try:
             tables = con.execute(
                 "SELECT table_name FROM information_schema.tables "
@@ -178,13 +181,14 @@ def load_revenue_data(
                     # Derive forecast start month from the earliest year_month
                     # e.g. min("2026-02") → month 2 (February)
                     min_ym = monthly_df["year_month"].min()  # "YYYY-MM"
+                    forecast_start_year = int(min_ym.split("-")[0])
                     forecast_start_month = int(min_ym.split("-")[1])
                     # Keep only the columns the frontend expects
                     monthly_df = monthly_df[["path_id", "segment", "month", "monthly_revenue_usd"]]
 
                     print(f"  [data_loader] Monthly rows: {len(monthly_df)} "
                           f"({monthly_df['path_id'].nunique()} paths), "
-                          f"forecast_start_month={forecast_start_month}")
+                          f"forecast_start={forecast_start_year}-{forecast_start_month:02d}")
                 else:
                     forecast_start_month = 1  # default January when no monthly data
         except Exception as e:
@@ -206,7 +210,7 @@ def load_revenue_data(
                 if hasattr(v, "item"):
                     row[k] = v.item()
 
-        return annual_records, monthly_records, forecast_start_month
+        return annual_records, monthly_records, forecast_start_month, forecast_start_year
 
     finally:
         os.unlink(tmp_path)
