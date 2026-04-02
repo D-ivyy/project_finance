@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import type {
   LoanConfig, DisplayConfig, FilterConfig, AmortType, SculptPercentile, AssetMeta
 } from "@/types";
-import { resolveOpex, resolveMinDscr } from "@/lib/finance";
+import { resolveOpex, resolveMinDscr, resolveDefaultLoan } from "@/lib/finance";
 import { Info } from "lucide-react";
 
 // ── Tooltip ──────────────────────────────────────────────────────────────────
@@ -216,6 +216,7 @@ export function ConfigSidebar({
 }: ConfigSidebarProps) {
   const opexInfo = asset ? resolveOpex(asset, opexOverride) : null;
   const minDscrInfo = asset ? resolveMinDscr(asset, minDscrOverride) : null;
+  const defaultLoan = asset ? resolveDefaultLoan(asset) : null;
 
   const setLoan = (partial: Partial<LoanConfig>) =>
     onLoanChange({ ...loan, ...partial });
@@ -290,7 +291,11 @@ export function ConfigSidebar({
 
       <Field
         label="Principal ($M)"
-        tooltip="Illustrative mid-size utility-scale solar loan.\nRange: $1M–$500M typical.\nSource: user-defined"
+        tooltip={
+          defaultLoan && asset?.ac_capacity_mw
+            ? `Default: $${(defaultLoan.principal / 1e6).toFixed(0)}M\n${asset.ac_capacity_mw.toFixed(0)} MW × CapEx × leverage (${asset.asset_type})\nRange: $1M–$1B.\nResets on site change.`
+            : "Loan principal. Range: $1M–$1B.\nSource: user-defined"
+        }
       >
         <NumberInput
           value={loan.principal / 1e6}
@@ -303,7 +308,11 @@ export function ConfigSidebar({
 
       <Field
         label="Rate (%)"
-        tooltip="Annual interest rate (nominal, fixed).\nTypical US project finance 2024–25: 5.5–7.5%.\nSource: market convention"
+        tooltip={
+          defaultLoan && asset
+            ? `Default: ${(defaultLoan.annualRate * 100).toFixed(2)}% (${asset.asset_type})\nSolar: 5.75% | Wind: 6.25% | Battery: 7.00%\nResets on site change.`
+            : "Annual interest rate (nominal, fixed).\nTypical US project finance 2024–25: 5.5–7.5%."
+        }
       >
         <NumberInput
           value={(loan.annualRate * 100).toFixed(2)}
@@ -316,7 +325,11 @@ export function ConfigSidebar({
 
       <Field
         label="Tenor (years)"
-        tooltip="Loan tenor from COD.\nDefault: 18yr — industry standard for utility-scale renewable term debt.\nSource: Norton Rose Fulbright 2024; NREL ATB"
+        tooltip={
+          defaultLoan && asset
+            ? `Default: ${defaultLoan.tenorYears}yr (${asset.asset_type})\nSolar: 18yr | Wind: 15yr | Battery: 12yr\nSource: Norton Rose Fulbright 2024\nResets on site change.`
+            : "Loan tenor from COD.\nDefault: 18yr.\nSource: Norton Rose Fulbright 2024; NREL ATB"
+        }
       >
         <NumberInput
           value={loan.tenorYears}
