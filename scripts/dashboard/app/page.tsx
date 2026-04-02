@@ -6,8 +6,8 @@ import type {
   ComputedFinancials,
 } from "@/types";
 import { fetchSiteData, fetchSites } from "@/lib/api";
-import { computeMonthlyStats, computeQuarterlyPercentiles, computeMonthlyPercentiles } from "@/lib/stats";
-import { computeFinancials, computeMonthlyViewData, resolveDefaultLoan } from "@/lib/finance";
+import { computePercentiles, computeMonthlyStats, computeQuarterlyPercentiles, computeMonthlyPercentiles } from "@/lib/stats";
+import { computeFinancials, computeMonthlyViewData, resolveDefaultLoan, resolveOpex } from "@/lib/finance";
 import { validateLoanConfig, validateCrossControls, hasHardError } from "@/lib/validation";
 
 import { Header } from "@/components/Header";
@@ -166,7 +166,19 @@ export default function DashboardPage() {
       try {
         const data = await fetchSiteData(slug, kind, market);
         setSiteData(data);
-        setLoan(resolveDefaultLoan(data.asset));
+
+        // Compute P50 CFADS for revenue-constrained loan sizing
+        const simRev = data.revenue_paths
+          .filter((p) => p.segment === "simulated")
+          .map((p) => p.annual_revenue_usd);
+        let p50Cfads: number | undefined;
+        if (simRev.length > 0) {
+          const pcts = computePercentiles(simRev);
+          const { value: opex } = resolveOpex(data.asset, null);
+          p50Cfads = pcts.P50 - opex;
+        }
+
+        setLoan(resolveDefaultLoan(data.asset, p50Cfads));
         setOpexOverride(null);
         setMinDscrOverride(null);
       } catch (e: unknown) {
