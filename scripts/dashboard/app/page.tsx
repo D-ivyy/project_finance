@@ -7,7 +7,7 @@ import type {
 } from "@/types";
 import { fetchSiteData, fetchSites } from "@/lib/api";
 import { computeMonthlyStats, computeQuarterlyPercentiles, computeMonthlyPercentiles } from "@/lib/stats";
-import { computeFinancials, computeMonthlyViewData } from "@/lib/finance";
+import { computeFinancials, computeMonthlyViewData, resolveDefaultLoan } from "@/lib/finance";
 import { validateLoanConfig, validateCrossControls, hasHardError } from "@/lib/validation";
 
 import { Header } from "@/components/Header";
@@ -22,6 +22,8 @@ import { AssumptionBanner } from "@/components/AssumptionBanner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 // ── Default state ──────────────────────────────────────────────────────────────
+
+const PREFERRED_SITE = "gemini_solar_hybrid";
 
 const DEFAULT_LOAN: LoanConfig = {
   principal: 50_000_000,
@@ -139,7 +141,10 @@ export default function DashboardPage() {
     fetchSites()
       .then((s) => {
         setSites(s);
-        if (s.length > 0) setSelectedSite(s[0].asset_slug);
+        if (s.length > 0) {
+          const pick = s.find((x) => x.asset_slug === PREFERRED_SITE) ?? s[0];
+          setSelectedSite(pick.asset_slug);
+        }
       })
       .catch((e) => {
         console.error("Could not load sites:", e);
@@ -161,6 +166,7 @@ export default function DashboardPage() {
       try {
         const data = await fetchSiteData(slug, kind, market);
         setSiteData(data);
+        setLoan(resolveDefaultLoan(data.asset));
         setOpexOverride(null);
         setMinDscrOverride(null);
       } catch (e: unknown) {

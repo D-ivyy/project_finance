@@ -309,6 +309,37 @@ Most lenders use one of these approaches. Our Gen 1 simplification is
 equivalent to the "forecast fill" approach — we treat projected revenue
 as if it already happened.
 
+### What this flattening hides: seasonal DSCR variation
+
+The code **does** compute seasonal quarterly CFADS (line 221 of `finance.ts`):
+
+```typescript
+qCfads[k] = qRevPcts[k] - quarterlyOpex;   // varies by quarter (seasonal revenue)
+```
+
+But the DSCR displayed is always the **annual ratio** (line 214), not
+`qCfads / quarterlyDS`. Here's what that masks:
+
+```
+Year 1 — What each quarter actually looks like vs what we show:
+
+                Revenue    OpEx      CFADS      DS       True Q DSCR   Shown (LTM)
+Q1 (winter):   $1.2M    - $0.575M = $0.625M  / $0.903M = 0.69x        0.93x
+Q2 (spring):   $1.8M    - $0.575M = $1.225M  / $0.903M = 1.36x        0.93x
+Q3 (summer):   $2.8M    - $0.575M = $2.225M  / $0.903M = 2.46x        0.93x
+Q4 (fall):     $1.4M    - $0.575M = $0.825M  / $0.903M = 0.91x        0.93x
+                                                         ─────         ─────
+Annual:        $7.2M    - $2.3M   = $4.9M    / $3.61M  = 1.36x        0.93x
+```
+
+The seasonal swing (0.69x → 2.46x) is **invisible** in Gen 1. A lender
+looking at Q1 would see a covenant breach at 0.69x, but our model shows
+0.93x uniformly. This is the biggest limitation of the annual-ratio-
+assigned-to-every-quarter approach.
+
+**Gen 2 target:** Compute and display per-quarter DSCR alongside LTM DSCR
+so seasonal covenant risk is visible.
+
 ### Why LTM DSCR is the same within a year (in our model)
 
 In our current model (Gen 1), the seasonal revenue pattern **repeats

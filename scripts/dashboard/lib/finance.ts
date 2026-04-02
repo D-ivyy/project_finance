@@ -34,6 +34,46 @@ const MIN_DSCR_BY_TYPE: Record<string, number> = {
   battery: 2.0,
 };
 
+// ── Loan defaults by asset type ─────────────────────────────────────────────
+
+const LEVERAGE_BY_TYPE: Record<string, number> = {
+  solar: 0.75,   // predictable CF, strong bankability
+  wind: 0.70,    // higher variability
+  battery: 0.60, // newer tech, higher merchant risk
+};
+
+const RATE_BY_TYPE: Record<string, number> = {
+  solar: 0.0575,  // most predictable generation
+  wind: 0.0625,   // higher resource variability
+  battery: 0.07,  // technology/merchant risk premium
+};
+
+const TENOR_BY_TYPE: Record<string, number> = {
+  solar: 18,   // industry standard (Norton Rose 2024)
+  wind: 15,    // mechanical wear, shorter useful life
+  battery: 12, // degradation limits economic life
+};
+
+export function resolveDefaultLoan(asset: AssetMeta): LoanConfig {
+  const type = asset.asset_type;
+  const capex = CAPEX_PER_MW[type] ?? 1_200_000;
+  const leverage = LEVERAGE_BY_TYPE[type] ?? 0.75;
+  const capacity = asset.ac_capacity_mw ?? 100;
+
+  // Round to nearest $1M
+  const principal =
+    Math.round((capacity * capex * leverage) / 1_000_000) * 1_000_000;
+
+  return {
+    principal,
+    annualRate: RATE_BY_TYPE[type] ?? 0.06,
+    tenorYears: TENOR_BY_TYPE[type] ?? 18,
+    amortType: "level_principal",
+    targetDscrSculpt: 1.40,
+    sculptPercentile: "P50",
+  };
+}
+
 export function resolveOpex(
   asset: AssetMeta,
   override: number | null
