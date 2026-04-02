@@ -293,7 +293,7 @@ export function ConfigSidebar({
         label="Principal ($M)"
         tooltip={
           defaultLoan && asset?.ac_capacity_mw
-            ? `Default: $${(defaultLoan.principal / 1e6).toFixed(0)}M\n${asset.ac_capacity_mw.toFixed(0)} MW × CapEx × leverage (${asset.asset_type})\nRange: $1M–$1B.\nResets on site change.`
+            ? `Default: $${(defaultLoan.principal / 1e6).toFixed(0)}M\nSized from min(CapEx × leverage, DSCR-constrained)\n${asset.ac_capacity_mw.toFixed(0)} MW ${asset.asset_type}\nResets on site change.`
             : "Loan principal. Range: $1M–$1B.\nSource: user-defined"
         }
       >

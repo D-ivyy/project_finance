@@ -54,20 +54,55 @@ const TENOR_BY_TYPE: Record<string, number> = {
   battery: 12, // degradation limits economic life
 };
 
-export function resolveDefaultLoan(asset: AssetMeta): LoanConfig {
+// Sizing targets: the DSCR lenders use to SIZE the loan (higher than covenant min).
+// Principal is capped so that Year 1 P50 DSCR >= this target.
+const SIZING_DSCR_BY_TYPE: Record<string, number> = {
+  solar: 1.40,   // covenant min 1.25x + headroom
+  wind: 1.45,    // covenant min 1.35x + headroom
+  battery: 2.20, // covenant min 2.00x + headroom
+};
+
+/**
+ * Compute default loan parameters from asset metadata and (optionally) revenue data.
+ *
+ * Two constraints determine the principal:
+ *   1. CapEx-based:   capacity × CapEx/MW × leverage ratio
+ *   2. Revenue-based: max principal where Y1 DSCR(P50) >= sizing target
+ *
+ * The binding constraint (lower value) wins — just like in a real term sheet.
+ * If p50Cfads is not provided (no revenue data yet), only the CapEx constraint applies.
+ */
+export function resolveDefaultLoan(asset: AssetMeta, p50Cfads?: number): LoanConfig {
   const type = asset.asset_type;
   const capex = CAPEX_PER_MW[type] ?? 1_200_000;
   const leverage = LEVERAGE_BY_TYPE[type] ?? 0.75;
   const capacity = asset.ac_capacity_mw ?? 100;
+  const rate = RATE_BY_TYPE[type] ?? 0.06;
+  const tenor = TENOR_BY_TYPE[type] ?? 18;
+
+  // Constraint 1: CapEx-based ceiling
+  const capexPrincipal = capacity * capex * leverage;
+
+  let principal = capexPrincipal;
+
+  // Constraint 2: Revenue-based ceiling (if we have CFADS data)
+  // For level_principal: Y1 DS = P/T + P*r = P × (1/T + r)
+  // Target: P50_CFADS / DS >= sizingDscr  →  DS <= P50_CFADS / sizingDscr
+  // So:     P <= (P50_CFADS / sizingDscr) / (1/T + r)
+  if (p50Cfads && p50Cfads > 0) {
+    const sizingDscr = SIZING_DSCR_BY_TYPE[type] ?? 1.40;
+    const maxDS = p50Cfads / sizingDscr;
+    const revenuePrincipal = maxDS / (1 / tenor + rate);
+    principal = Math.min(capexPrincipal, revenuePrincipal);
+  }
 
   // Round to nearest $1M
-  const principal =
-    Math.round((capacity * capex * leverage) / 1_000_000) * 1_000_000;
+  principal = Math.round(principal / 1_000_000) * 1_000_000;
 
   return {
     principal,
-    annualRate: RATE_BY_TYPE[type] ?? 0.06,
-    tenorYears: TENOR_BY_TYPE[type] ?? 18,
+    annualRate: rate,
+    tenorYears: tenor,
     amortType: "level_principal",
     targetDscrSculpt: 1.40,
     sculptPercentile: "P50",
