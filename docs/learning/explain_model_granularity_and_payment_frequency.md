@@ -65,6 +65,194 @@ Think of debt service like rent. Our model calculates **yearly rent** and then s
 
 ---
 
+## The Five Terms That Shape Debt Service
+
+Before diving into worked examples, it's worth understanding the five
+terms that determine how debt service is calculated. Each one has a
+Gen 1 value and a Gen 2 target — and together they explain why
+"annual ÷ 4" is not the same as true quarterly DS.
+
+### 1. Interest rate: nominal vs periodic vs effective
+
+The term sheet states a **nominal annual rate** (e.g., 5.75%). But when
+payments happen sub-annually, the rate applied per period is different
+from the annual rate, and the total cost depends on how you convert:
+
+```
+Nominal annual rate:  5.75%  (what the term sheet says)
+
+Simple conversion (Gen 1):
+  Quarterly:  5.75% / 4   = 1.4375%  per quarter
+  Monthly:    5.75% / 12  = 0.4792%  per month
+  This is what we use — divide the annual rate by N.
+
+Effective annual rate (what you actually pay with quarterly compounding):
+  (1 + 0.014375)^4 - 1 = 5.875%
+  The compounding makes the true cost higher than the nominal rate.
+```
+
+**What this means concretely ($213M at 5.75%):**
+
+| Compounding | Year 1 interest | Effective rate |
+|-------------|----------------|----------------|
+| Annual (Gen 1) | $12,247,500 | 5.750% |
+| Quarterly | $12,162,946 | 5.875% effective, but less total interest because balance reduces intra-year |
+| Monthly | $12,128,417 | 5.904% effective, even less total interest |
+
+The paradox: quarterly compounding has a **higher effective rate** but
+produces **less total interest** because each payment reduces the balance
+sooner. The balance reduction effect dominates.
+
+**Gen 1:** Uses nominal annual rate applied once per year. No conversion.
+**Gen 2:** Will use periodic rate (nominal ÷ N) applied each period.
+
+### 2. Compounding frequency: when interest accrues
+
+Compounding frequency determines how often the interest is calculated and
+applied to the balance:
+
+```
+$213M loan, 5.75% nominal, Year 1:
+
+Annual compounding (Gen 1):
+  Interest calculated ONCE:
+  Jan ──────────────────────────────────────── Dec
+  │           $213M × 5.75% = $12.25M          │
+  └─────────────────────────────────────────────┘
+  One calculation, one number, applied at year-end.
+
+Quarterly compounding (Gen 2 target):
+  Interest calculated FOUR TIMES on declining balance:
+  Jan─── Mar   Apr─── Jun   Jul─── Sep   Oct─── Dec
+  │ $3.06M │   │ $3.02M │   │ $2.98M │   │ $2.93M │
+  └────────┘   └────────┘   └────────┘   └────────┘
+  $213.0M       $210.0M       $207.1M       $204.1M
+  (opening)    (after Q1     (after Q2     (after Q3
+                payment)      payment)      payment)
+```
+
+The declining interest across quarters is the key difference — Gen 1
+shows flat $3.06M per quarter (annual $12.25M ÷ 4), Gen 2 would show
+$3.06M → $3.02M → $2.98M → $2.93M as the balance steps down.
+
+### 3. Payment frequency: when cash actually leaves
+
+Payment frequency is a **contractual term** — it's set in the credit
+agreement and determines when the borrower must make debt service payments:
+
+| Frequency | Periods/year | Common in | Balance updates |
+|-----------|-------------|-----------|-----------------|
+| **Annual** | 1 | Some international deals | Once per year — balance sits high all year |
+| **Semi-annual** | 2 | Many US project finance loans | Twice per year — common in infrastructure |
+| **Quarterly** | 4 | Most global project finance | Four times — the standard for covenant testing |
+| **Monthly** | 12 | Corporate/mortgage, rare in PF | Twelve times — finest granularity |
+
+**Why more frequent payments = less total interest:**
+
+```
+$213M at 5.75%, level principal, Year 1:
+
+Annual (1 payment):
+  Balance stays at $213M for 12 months
+  Interest = $213M × 5.75% = $12,247,500
+
+Quarterly (4 payments):
+  Balance: $213M → $210M → $207M → $204M
+  Interest = $3.06M + $3.02M + $2.98M + $2.93M = $11,992,944
+
+Difference: $254,556 less interest in Year 1 alone.
+Over 18 years: ~$2.3M less total interest with quarterly payments.
+```
+
+The borrower benefits from paying down principal sooner. The lender
+receives cash sooner. Both sides typically prefer sub-annual payments.
+
+**Gen 1:** No payment frequency concept — annual computation, ÷ N display.
+**Gen 2:** `paymentFrequency` field on `LoanConfig` (quarterly, semi-annual,
+or annual). `buildAmortization()` would produce one row per payment period.
+
+### 4. Day count convention: how "days" are measured
+
+When computing interest for a specific period, you need to know how many
+"days" that period contains. Different conventions give different answers:
+
+| Convention | Year basis | Day counting | Example: Q1 (Jan-Mar) interest on $213M at 5.75% |
+|-----------|-----------|-------------|--------------------------------------------------|
+| **30/360** | 360 days | Each month = 30 days | $213M × 5.75% × 90/360 = $3,061,875 |
+| **ACT/365** | 365 days | Actual calendar days (90 in Q1) | $213M × 5.75% × 90/365 = $3,019,110 |
+| **ACT/360** | 360 days | Actual calendar days, 360-day year | $213M × 5.75% × 90/360 = $3,061,875 |
+
+The differences are small per quarter (~$43K between 30/360 and ACT/365)
+but accumulate over 18 years and matter in loan documentation.
+
+**Why conventions vary:**
+- **30/360** — simplest; every quarter is exactly 90 "days." Favoured in
+  US fixed-rate project finance because it's predictable.
+- **ACT/365** — used in UK, Australia, and floating-rate deals. Q1 (90 days)
+  and Q3 (92 days) produce different interest amounts.
+- **ACT/360** — common for SOFR/LIBOR-based floating rate. Slightly
+  inflates interest (365 actual days but only 360 in the denominator).
+
+**Gen 1:** No day count — we use `balance × annualRate` (implicitly 30/360
+at annual level, which is the same as no convention at all).
+**Gen 2:** `dayCount` field on `LoanConfig`. The amortization loop would
+use period days / year basis to compute interest per period.
+
+### 5. Outstanding balance: the declining denominator
+
+Interest is always `balance × rate × time`. The balance is what makes
+sub-annual computation non-trivial — it changes after every payment:
+
+```
+Gen 1 — balance is flat within each year:
+
+$213M ████████████████████████████████████████ Year 1
+$201M ██████████████████████████████████████   Year 2
+$189M ████████████████████████████████████     Year 3
+      ↑                                       ↑
+  one step-down                          one step-down
+  per year                               per year
+
+Gen 2 — balance steps down after each quarterly payment:
+
+$213M ████████████
+$210M ██████████                           4 step-downs
+$207M ████████         Year 1              per year
+$204M ██████
+$201M ████████████
+$198M ██████████                           4 step-downs
+$195M ████████         Year 2              per year
+$192M ██████
+```
+
+In Gen 1, interest is calculated on the **Year 1 opening balance**
+($213M) for the entire year. In Gen 2, interest after Q1 is calculated
+on $210M (lower), after Q2 on $207M (lower still). Each step-down
+reduces the interest in the next period.
+
+This is the root cause of the ÷4 ≠ true quarterly gap: Gen 1 doesn't
+know the balance changed mid-year, so it overcharges interest in Q2–Q4.
+
+### How these five terms interact
+
+```
+Term sheet says:     $213M, 5.75%, 18yr, quarterly payments, 30/360
+
+For each quarter:
+  1. Day count:        How many days in this quarter? (30/360 → 90 days)
+  2. Periodic rate:    5.75% × 90/360 = 1.4375%
+  3. Opening balance:  Start of period balance (changes after each payment)
+  4. Interest:         Balance × periodic rate
+  5. Principal:        Scheduled repayment for this period
+  6. DS:               Interest + principal
+  7. New balance:      Old balance − principal → feeds step 3 of next period
+
+Gen 1 skips steps 1-3 by using annual rate × annual balance once per year,
+then dividing the result. Gen 2 would execute all 7 steps for each period.
+```
+
+---
+
 ## What "True Payment Frequency Modeling" Means
 
 ### Example: $50M loan, 6% rate, 18-year tenor, level payment
