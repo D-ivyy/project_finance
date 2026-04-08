@@ -143,6 +143,226 @@ This is exactly the scenario lenders stress-test — seasonal revenue dips that 
 
 ---
 
+## Interest → DS Conversion: Tracing the Code Path
+
+The previous section used a $50M level_payment example. This section
+traces the **actual code** with our default site (Gemini Solar Hybrid,
+$213M, 5.75%, 18yr, level_principal) to show exactly what Gen 1 does
+and how Gen 2 would differ.
+
+### Step 1: What the code receives
+
+```typescript
+// page.tsx → resolveDefaultLoan() produces:
+{
+  principal:    213_000_000,   // $213M (revenue-constrained)
+  annualRate:   0.0575,        // 5.75% nominal annual
+  tenorYears:   18,
+  amortType:    "level_principal",
+}
+```
+
+### Step 2: How Gen 1 computes interest (annual, once per year)
+
+The function `buildAmortization()` in `finance.ts` runs this loop:
+
+```typescript
+// level_principal branch (finance.ts:190-205)
+const principalPmt = principal / tenorYears;       // $213M / 18 = $11,833,333
+
+for (let t = 1; t <= tenorYears; t++) {
+  const interest = balance * annualRate;            // balance × 5.75%
+  const debtService = principalPmt + interest;
+  balance = balance - principalPmt;
+}
+```
+
+**Year 1 trace:**
+
+```
+Input:
+  balance     = $213,000,000
+  annualRate  = 0.0575
+  tenorYears  = 18
+
+Calculation:
+  principalPmt = $213,000,000 / 18           = $11,833,333
+  interest     = $213,000,000 × 0.0575       = $12,247,500
+  debtService  = $11,833,333 + $12,247,500   = $24,080,833
+  new balance  = $213,000,000 - $11,833,333  = $201,166,667
+
+Output:  LoanScheduleRow {
+  year: 1,
+  openingBalance:  $213,000,000,
+  interest:        $12,247,500,
+  principal:       $11,833,333,
+  debtService:     $24,080,833,    ← this is the ANNUAL figure
+  closingBalance:  $201,166,667,
+}
+```
+
+**Year 2 trace:**
+
+```
+  balance      = $201,166,667     (reduced after Year 1 payment)
+  interest     = $201,166,667 × 0.0575 = $11,567,083   ← less (balance lower)
+  debtService  = $11,833,333 + $11,567,083 = $23,400,417
+```
+
+### Step 3: How Gen 1 converts to sub-annual (÷ N)
+
+For the quarterly view (`computeQuarterlyData()`):
+
+```typescript
+const quarterlyDS = row.debtService / 4;   // finance.ts:280
+```
+
+For the monthly view (`computeMonthlyViewData()`):
+
+```typescript
+const monthlyDS = annualDS / 12;            // finance.ts:358
+```
+
+**Year 1 quarterly display:**
+
+```
+Q1 2026:  $24,080,833 / 4 = $6,020,208
+Q2 2026:  $24,080,833 / 4 = $6,020,208    ← identical
+Q3 2026:  $24,080,833 / 4 = $6,020,208    ← identical
+Q4 2026:  $24,080,833 / 4 = $6,020,208    ← identical
+```
+
+All four quarters show the same DS. The balance doesn't change within the
+year. Interest doesn't change within the year. It's one annual computation
+spread flat across four display slots.
+
+### Step 4: What Gen 2 would compute (true quarterly)
+
+Same loan, but payments actually happen quarterly:
+
+```
+Periodic rate = 5.75% / 4 = 1.4375% per quarter
+Annual principal per quarter = $213M / (18 × 4) = $213M / 72 = $2,958,333
+
+Q1 2026:
+  Opening balance:  $213,000,000
+  Interest:         $213,000,000 × 1.4375% = $3,061,875
+  Principal:        $2,958,333
+  DS:               $3,061,875 + $2,958,333 = $6,020,208
+  Closing balance:  $213,000,000 - $2,958,333 = $210,041,667
+
+Q2 2026:
+  Opening balance:  $210,041,667              ← balance dropped by $2.96M
+  Interest:         $210,041,667 × 1.4375% = $3,019,349
+  Principal:        $2,958,333
+  DS:               $3,019,349 + $2,958,333 = $5,977,683   ← $42K less than Q1
+  Closing balance:  $207,083,333
+
+Q3 2026:
+  Opening balance:  $207,083,333
+  Interest:         $207,083,333 × 1.4375% = $2,976,823
+  Principal:        $2,958,333
+  DS:               $2,976,823 + $2,958,333 = $5,935,157   ← $85K less than Q1
+  Closing balance:  $204,125,000
+
+Q4 2026:
+  Opening balance:  $204,125,000
+  Interest:         $204,125,000 × 1.4375% = $2,934,297
+  Principal:        $2,958,333
+  DS:               $2,934,297 + $2,958,333 = $5,892,631   ← $128K less than Q1
+  Closing balance:  $201,166,667
+```
+
+### Step 5: Comparing the two side by side
+
+**Year 1 quarterly DS:**
+
+```
+Quarter     Gen 1 (÷4)    Gen 2 (true Q)    Difference
+──────      ──────────    ──────────────    ──────────
+Q1 2026     $6,020,208     $6,020,208       $0          (identical — same opening balance)
+Q2 2026     $6,020,208     $5,977,683      −$42,525     (Gen 2 lower — balance shrank)
+Q3 2026     $6,020,208     $5,935,157      −$85,051
+Q4 2026     $6,020,208     $5,892,631      −$127,577
+──────      ──────────    ──────────────    ──────────
+Year total  $24,080,833   $23,825,679      −$255,154
+```
+
+**Key observations:**
+
+1. **Q1 is identical** — both start from the same balance, same rate.
+   The divergence only appears once the balance changes intra-year.
+
+2. **Gen 1 overcharges later quarters** — flat ÷4 means Q4 pays $128K
+   more than it should, because Gen 1 doesn't know the balance dropped
+   after Q1-Q3 payments.
+
+3. **Gen 1 overestimates Year 1 total DS by $255K** — because it applies
+   interest on the full opening balance for the whole year, instead of on
+   the declining quarterly balance.
+
+4. **Over 18 years, this compounds** — each year's overestimate feeds into
+   the next. Total interest over the life of the loan differs by ~2-3%.
+
+### Step 6: Impact on DSCR
+
+Using Gemini Solar Hybrid revenue (P50 CFADS ~$33.8M):
+
+```
+                  Gen 1               Gen 2 (true quarterly)
+Quarter    DS        DSCR(P50)    DS        DSCR(P50)
+──────    ────────  ─────────    ────────  ─────────
+Q1 2026   $6.02M    (*)          $6.02M    (*)
+Q2 2026   $6.02M    (*)          $5.98M    (*)
+Q3 2026   $6.02M    (*)          $5.94M    (*)
+Q4 2026   $6.02M    (*)          $5.89M    (*)
+
+Annual    $24.08M   1.40x        $23.83M   1.42x
+
+(*) Quarterly DSCR uses seasonal quarterly CFADS, not annual P50 ÷ 4.
+    The annual DSCR is the meaningful comparison here.
+```
+
+Gen 2 would show a slightly higher annual DSCR (1.42x vs 1.40x) because
+total DS is lower. But more importantly, the **quarterly DSCR profile
+changes shape** — Q4 becomes easier to service (lower DS) even though
+it's also the lowest revenue quarter (winter). This changes where the
+binding constraint appears.
+
+### What would need to change in the code for Gen 2
+
+```
+Current (Gen 1):                     Target (Gen 2):
+────────────────                     ────────────────
+LoanConfig {                         LoanConfig {
+  principal                            principal
+  annualRate                           annualRate
+  tenorYears                           tenorYears
+  amortType                            amortType
+                                       paymentFrequency  ← NEW (quarterly/semi/annual)
+                                       dayCount          ← NEW (30/360, ACT/365)
+}                                    }
+
+buildAmortization():                 buildAmortization():
+  loop: 1..tenorYears                  periodsPerYear = freq → 4 or 2 or 1
+  interest = balance × annualRate      periodicRate = annualRate / periodsPerYear
+  principalPmt = P / tenorYears        totalPeriods = tenorYears × periodsPerYear
+  balance -= principalPmt              loop: 1..totalPeriods
+                                         interest = balance × periodicRate
+                                         principalPmt = P / totalPeriods
+                                         balance -= principalPmt
+
+Output: 18 annual rows               Output: 72 quarterly rows (or 36 semi-annual)
+Then: ÷4 for display                 Then: direct — no division needed
+```
+
+The key shift: `buildAmortization()` currently produces **18 annual rows**
+that get divided for display. Gen 2 would produce **72 quarterly rows**
+(or whatever the payment frequency dictates) that ARE the display — no
+division step.
+
+---
+
 ## Common Misconceptions
 
 | You might think... | But actually... |
