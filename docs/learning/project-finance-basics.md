@@ -32,15 +32,87 @@ It answers: "For every $1 the project owes, how many dollars of operating cash f
 
 ### Three flavours — know which one you're showing
 
-| Type | Definition | When used | Dashboard context |
-|------|-----------|-----------|-------------------|
-| **Annual DSCR** | Full-year CFADS ÷ full-year DS | Term sheet covenants, annual reviews | Lifecycle view — one value per year |
-| **LTM DSCR** | Trailing 12-month CFADS ÷ trailing 12-month DS | Operational monitoring, semi-annual testing | 3-Year view — computed quarterly but uses 12-month lookback |
-| **Quarterly DSCR** | Single-quarter CFADS ÷ single-quarter DS | Short-term monitoring, cash trap tests | Forward 12M view — per-quarter snapshot |
+| Type | Definition | Numerator window | Denominator window | Computed at | Industry use |
+|------|-----------|-----------------|-------------------|-------------|-------------|
+| **Annual DSCR** | Full-year CFADS ÷ full-year DS | 12 months (full year) | 12 months (full year) | Once per year | Term sheet covenants, annual credit reviews |
+| **LTM DSCR** | Trailing 12-month CFADS ÷ trailing 12-month DS | 12 months (rolling lookback) | 12 months (rolling lookback) | Each quarter (or semi-annual test date) | Operational monitoring, semi-annual covenant testing |
+| **Quarterly DSCR** | Single-quarter CFADS ÷ single-quarter DS | 3 months (one quarter) | 3 months (one quarter) | Each quarter | Short-term monitoring, cash trap tests |
+
+### How each maps to our dashboard views
+
+| Dashboard view | DSCR type shown | X-axis resolution | Heatmap DSCR source | Why this type? |
+|---------------|----------------|-------------------|--------------------|----|
+| **Forward 12M** | Quarterly DSCR | Monthly (12 points) | Per-quarter block DSCR | Shows seasonal cash flow risk — does this quarter's revenue cover this quarter's DS? |
+| **3-Year** | LTM DSCR | Quarterly (12 points) | LTM at each quarter | Smooths out seasonality over a rolling year; matches how lenders test covenants operationally |
+| **Lifecycle** | LTM DSCR | Quarterly (72 points) | LTM at each quarter | Same as 3-Year but for the full 18-year loan tenor; shows how DSCR improves as debt amortizes |
+| **Annual fallback** | Annual DSCR | Annual (18 points) | Per-year DSCR | Only used when monthly data is unavailable (no quarterly breakdown possible); one value per year |
+
+**Key distinction — 3-Year and Lifecycle both use LTM DSCR, not Annual DSCR.**
+They display quarterly data points on the x-axis (the CFADS band undulates
+seasonally), but the DSCR used for heatmap coloring is the LTM value — which
+in Gen 1 equals the annual DSCR and is flat across all 4 quarters in a year.
+The LTM value only changes at year boundaries when debt service steps down.
+
+The Annual fallback is a **degraded mode** — it appears only when the API
+returns no monthly paths (e.g., a site where only annual aggregation has run).
+It is not the primary view for any chart mode.
 
 **Common mistake:** Mixing these without labelling. An analyst seeing "DSCR: 1.25x" will assume
 Annual DSCR unless told otherwise. If you're showing quarterly DSCR, label it explicitly:
-"Quarterly DSCR" or "Q2 2026 DSCR."
+"Quarterly DSCR" or "Q2 2026 DSCR." Our tooltips label each type:
+`"Q2 2026 (Apr–Jun) — LTM DSCR"` or `"Q2 2026 (Apr–Jun) — Quarterly DSCR"`.
+
+### LTM DSCR in early quarters — the lookback problem
+
+LTM means "Last Twelve Months." But if the project's COD is March 2026,
+how can Q1 2026 have an LTM DSCR? The project has zero operating history.
+
+**Our Gen 1 approach:** Assign the full annual DSCR to every quarter from
+Day 1 — including Q1 Year 1. There is no ramp-up, no partial-year
+adjustment, no "insufficient history" flag.
+
+```
+Q1 2026 (project just started):
+  LTM DSCR = Annual CFADS (P50) / Annual DS
+           = uses the full annual figure, as if the project already ran a full year
+```
+
+This works in Gen 1 because:
+- Revenue is a **repeating 12-month seasonal pattern** (not actual metered data)
+- All percentiles come from Monte Carlo simulation, not from actuals
+- The only thing changing year-to-year is **debt service** (as the loan amortizes)
+- OpEx is flat and deterministic
+
+So the LTM DSCR is identical across all 4 quarters within a year, and only
+changes at year boundaries when DS steps down. This is equivalent to a
+"forecast fill" approach — treating projected revenue as if it already happened.
+
+**What changes in Gen 2 (and why this matters going forward):**
+
+When revenue varies year-to-year (degradation, PPA escalators, merchant curve
+changes), the LTM lookback becomes non-trivial:
+
+| Approach | How it works | When appropriate |
+|----------|-------------|-----------------|
+| **Forecast fill** (our Gen 1) | Use projected full-year figure for all quarters | Pre-operational or when only forecast data exists |
+| **Annualize** | Scale partial-year actuals to 12-month equivalent (e.g., 6 months × 2) | Early operational, limited history |
+| **Blend** | Mix actuals (months available) with forecast (remaining months) | Transition from forecast to operational |
+| **N/A until 4 quarters** | Don't report LTM until 4 full quarters of actuals exist | Conservative lender requirement |
+
+Most lenders use one of these. Our simplification is adequate for Gen 1 where
+the seasonal pattern repeats identically — but it **hides seasonal DSCR
+variation** (a Q1 winter quarter may actually breach while we show a passing
+annual figure uniformly).
+
+**Cross-references for deeper treatment:**
+- `docs/learning/examples/dscr-calculations-by-view.md` §3 — worked examples
+  showing why LTM is flat within a year, the "statistical trap" of summing
+  quarterly percentiles, and a side-by-side of quarterly vs LTM DSCR
+- `docs/learning/explain_model_granularity_and_payment_frequency.md` — the
+  Gen 1 ÷4/÷12 simplification and its impact on interest accrual, seasonal
+  DS, and covenant testing; includes the Gen 2 enhancement roadmap
+- `docs/cashflow_dscr_methodology.md` §2 — extending a 12-month forecast to
+  full cash flow, periodicity alignment, and multi-year extrapolation caveats
 
 ### Covenant thresholds
 
@@ -56,7 +128,175 @@ lenders define two thresholds. A future enhancement could distinguish lock-up fr
 
 ---
 
-## 2. Calendar Quarters — The Only Standard
+## 2. CFADS — Where the Cash Flow Comes From
+
+### What it is
+
+**Cash Flow Available for Debt Service** — the money left over from operations
+that can go toward paying the loan.
+
+```
+CFADS = Revenue − Operating Expenses
+```
+
+In a full model this would also subtract taxes, reserve top-ups, working capital
+changes, and other cash outflows. Our Gen 1 model uses the simplified form above.
+
+### Where revenue comes from
+
+Revenue flows through a pipeline before it reaches the dashboard:
+
+```
+Physical model          Price model           Aggregation         Dashboard
+(generation MWh)   ×   ($/MWh by hour)   →   annual + monthly    → CFADS
+                                              revenue paths
+```
+
+1. **Generation**: Physics-based simulation (solar irradiance → PV output, or
+   wind speed → turbine output) produces hourly MWh for each simulated path
+2. **Revenue**: Generation × locational marginal price (LMP) at the relevant
+   hub/node, for day-ahead (DA) or real-time (RT) market
+3. **Aggregation**: Hourly revenue is summed to monthly and annual totals,
+   stored as DuckDB tables in GCS
+4. **API**: The dashboard fetches annual and monthly revenue paths (typically
+   ~1,000 simulated paths per site)
+
+The monthly data captures **seasonal variation** — solar produces 2–3x more
+revenue in summer than winter. This is critical for quarterly DSCR analysis.
+
+### Granularity in our model
+
+| Granularity | Source | What it represents |
+|-------------|--------|--------------------|
+| **Annual** | `revenue_paths[].annual_revenue_usd` | Total revenue per simulated path per year |
+| **Monthly** | `monthly_paths[].monthly_revenue_usd` | Revenue per path per calendar month (Jan=1…Dec=12) |
+| **Quarterly** | Derived: sum of 3 monthly values | Q1 = Jan+Feb+Mar revenue, etc. |
+
+Annual percentiles (P10/P25/P50/P75/P90) are computed from the 1,000 annual
+path values. Monthly percentiles are computed per calendar month across paths.
+
+**Important:** Annual P50 ≠ sum of monthly P50s. Percentiles don't add linearly
+(see `dscr-calculations-by-view.md` §3 for a worked example).
+
+### Operating Expenses (OpEx)
+
+Our Gen 1 model uses a **flat annual OpEx** derived from NREL ATB 2024 benchmarks:
+
+| Asset type | OpEx rate | Example (100 MW) |
+|------------|----------|-------------------|
+| Solar | $23,000/MW-yr | $2.3M/yr |
+| Wind | $45,000/MW-yr | $4.5M/yr |
+| Battery | $40,000/MW-yr | $4.0M/yr |
+
+```
+Annual OpEx = AC Capacity (MW) × Rate per MW
+```
+
+**What this simplification misses:**
+
+| Real-world component | Our model | Reality |
+|---------------------|-----------|---------|
+| Scheduled maintenance | Flat ÷12 per month | Lumpy — $400k spring outage, $150k other months |
+| Insurance | Flat ÷12 per month | Often paid annually or semi-annually |
+| Land lease | Flat ÷12 per month | Quarterly or annual payments |
+| Property tax | Included in flat rate | Annual lump, varies by jurisdiction |
+| Degradation | Not modeled | Solar loses ~0.5%/yr, wind ~0.3%/yr output |
+
+The user can override OpEx manually in the sidebar. The auto-computed value
+resets when switching sites.
+
+### CFADS by view
+
+| View | CFADS computation | Granularity |
+|------|-------------------|-------------|
+| **Forward 12M** | Monthly revenue percentile − monthly OpEx (annual ÷ 12) | Per month |
+| **3-Year / Lifecycle** | Quarterly revenue percentile − quarterly OpEx (annual ÷ 4) | Per quarter (for chart band), but DSCR uses annual CFADS |
+| **Ledger table** | Annual CFADS = annual revenue percentile − annual OpEx | Per year |
+
+---
+
+## 3. Debt Service — What the Project Owes
+
+### What it is
+
+**Debt Service** = Principal Repayment + Interest Payment (per period)
+
+This is the fixed obligation the project must meet — unlike revenue (uncertain,
+seasonal), debt service is **deterministic** once loan terms are set.
+
+### The three amortization types
+
+The dashboard supports three ways to structure debt repayment:
+
+**Level Principal** (our default):
+
+```
+Each year repays the same amount of principal.
+Interest decreases as balance shrinks → total DS declines over time.
+
+Year 1:  ████████████ principal + ████████████████ interest  = $70.2M DS
+Year 5:  ████████████ principal + ██████████████ interest    = $62.0M DS
+Year 18: ████████████ principal + ██ interest               = $36.4M DS
+                                                (for $213M at 5.75%, 18yr)
+```
+
+DSCR **improves** over time because DS shrinks while revenue stays constant.
+This is why lenders often see the "binding case" (worst DSCR) in Year 1.
+
+**Level Payment** (annuity):
+
+```
+Total DS is the same every year.
+Interest decreases, principal increases.
+
+Year 1:  ████ principal + ████████████████ interest         = $24.8M DS
+Year 5:  ████████ principal + ████████████ interest         = $24.8M DS
+Year 18: ████████████████ principal + ██ interest           = $24.8M DS
+                                                (for $213M at 5.75%, 18yr)
+```
+
+DSCR is **flat** across years (constant DS, constant revenue in Gen 1).
+Simpler to analyze but more interest paid over the life of the loan.
+
+**Sculpted**:
+
+```
+DS is shaped so that DSCR = target (e.g., 1.40x) at a chosen percentile.
+DS(t) = CFADS(t) / target_DSCR
+
+Year 1:  DS set so DSCR at P50 = 1.40x exactly
+Year 2:  Same (revenue is constant in Gen 1)
+...
+```
+
+The principal may not fully amortize — the closing balance might not reach
+zero. This is flagged as a validation error in the dashboard.
+
+### How DS maps to sub-annual views
+
+In Gen 1, debt service is **computed annually** then divided down for display:
+
+```
+Annual DS = $24.08M (for Y1 of $213M level_principal at 5.75%)
+
+Quarterly view:  $24.08M ÷ 4  = $6.02M per quarter
+Monthly view:    $24.08M ÷ 12 = $2.01M per month
+```
+
+This is a simplification — real loans pay quarterly or semi-annually with
+true compounding (see `explain_model_granularity_and_payment_frequency.md`).
+
+### Debt Service on the chart
+
+On the hero chart, DS appears as a **step line** (flat within each year,
+stepping down at year boundaries for level_principal). The CFADS band
+undulates seasonally above or below this line — where the band is above DS,
+the project is generating more cash than it owes; where it dips below, it's
+in deficit for that period.
+
+---
+
+## 4. Calendar Quarters — The Only Standard
 
 ### Definition
 
@@ -119,7 +359,7 @@ Example — forecast starts March 2026, covers 12 months:
 
 ---
 
-## 3. Concrete Dates — Why They're Non-Negotiable
+## 5. Concrete Dates — Why They're Non-Negotiable
 
 ### The problem with "Y1, Y2, Y3"
 
@@ -157,7 +397,7 @@ For example: forecast starts February 2026 → Year 1 = 2026, Year 2 = 2027, etc
 
 ---
 
-## 4. LTV (Loan-to-Value) — What It Tells You
+## 6. LTV (Loan-to-Value) — What It Tells You
 
 ### Definition
 
@@ -194,7 +434,7 @@ we don't currently have.
 
 ---
 
-## 5. Debt / CFADS Ratio — Leverage at a Glance
+## 7. Debt / CFADS Ratio — Leverage at a Glance
 
 **Debt / CFADS = Total Outstanding Debt ÷ Year 1 P50 CFADS**
 
@@ -211,9 +451,9 @@ Not a covenant metric — this is a "first-glance" leverage indicator for screen
 
 ---
 
-## 6. Common Pitfalls in Financial Dashboards
+## 8. Common Pitfalls in Financial Dashboards
 
-### 6.1 Floating quarters
+### 8.1 Floating quarters
 
 **Mistake:** Grouping months into "quarters" based on forecast position instead of calendar.
 If forecast starts March: Q1 = Mar–May.
@@ -223,7 +463,7 @@ look unprofessional and creates confusion when cross-referencing with other repo
 
 **Fix:** Always use calendar quarters. Accept partial quarters at the edges.
 
-### 6.2 Abstract year labels
+### 8.2 Abstract year labels
 
 **Mistake:** Labelling the x-axis "Y1, Y2, Y3" instead of "'26, '27, '28."
 
@@ -232,7 +472,7 @@ counting from an unstated start date. This forces mental arithmetic and introduc
 
 **Fix:** Show real calendar years. The forecast start year is available from the data.
 
-### 6.3 Mixing DSCR types without labelling
+### 8.3 Mixing DSCR types without labelling
 
 **Mistake:** Showing quarterly DSCR in one view and annual DSCR in another, both labelled "DSCR."
 
@@ -243,7 +483,7 @@ DSCR threshold and conclude there's a covenant breach when there isn't one on an
 **Fix:** Always specify the DSCR type in the label or tooltip. "Quarterly DSCR: 1.15x" vs
 "Annual DSCR: 1.35x" vs "LTM DSCR: 1.28x."
 
-### 6.4 Ignoring seasonality in quarterly views
+### 8.4 Ignoring seasonality in quarterly views
 
 **Mistake:** Using the same revenue for all quarters in a year.
 
@@ -255,7 +495,7 @@ flow timing risks.
 **Our approach:** We use monthly revenue percentiles that capture seasonal variation, then
 aggregate to quarters. This preserves the seasonal signal.
 
-### 6.5 Not showing uncertainty
+### 8.5 Not showing uncertainty
 
 **Mistake:** Showing only the P50 (median) projection.
 
@@ -267,7 +507,7 @@ covenant test case.
 a visual sense of revenue uncertainty. The DSCR heatmap uses the P50 DSCR for coloring,
 but the tooltip shows the full percentile range.
 
-### 6.6 Comparing partial and full quarters
+### 8.6 Comparing partial and full quarters
 
 **Mistake:** Showing a 1-month "quarter" DSCR next to a 3-month quarter DSCR at the same
 visual scale, without indicating the difference.
@@ -280,7 +520,7 @@ Don't annualize — just show what you have and let the analyst interpret.
 
 ---
 
-## 7. How Our Dashboard Maps to These Conventions
+## 9. How Our Dashboard Maps to These Conventions
 
 | Convention | Our implementation | Status |
 |------------|-------------------|--------|
@@ -295,7 +535,7 @@ Don't annualize — just show what you have and let the analyst interpret.
 
 ---
 
-## 8. Glossary
+## 10. Glossary
 
 | Term | Definition |
 |------|-----------|
