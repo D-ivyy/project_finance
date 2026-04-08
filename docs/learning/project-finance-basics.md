@@ -126,6 +126,133 @@ Typical term sheet language:
 Our dashboard uses a single `minDscr` threshold (typically 1.25x) for covenant testing. In practice,
 lenders define two thresholds. A future enhancement could distinguish lock-up from default.
 
+### The frequency × data window framework
+
+Every time-based financial metric has two dimensions:
+1. **Computation frequency** — how often do you calculate it?
+2. **Data window** — how much data feeds the calculation?
+
+This framework applies uniformly across DSCR, CFADS, and Debt Service.
+Understanding where Gen 1 sits in this grid — and where Gen 2 needs to
+move — is the clearest way to see what's simplified and what's already
+correct.
+
+#### DSCR in the grid
+
+```
+                         Computation frequency
+                         Annual              Quarterly
+                    ┌────────────────────┬────────────────────┐
+  Data         12mo │  Annual DSCR       │  LTM DSCR          │
+  window            │  • 1 value/year    │  • 4 values/year   │
+                    │  • term sheets     │  • lender standard │
+                    │  • our fallback    │  • our 3Y/Lifecycle│
+                    ├────────────────────┼────────────────────┤
+                3mo │  (not useful)      │  Quarterly DSCR    │
+                    │                    │  • seasonal signal │
+                    │                    │  • cash trap tests │
+                    │                    │  • our Forward 12M │
+                    └────────────────────┴────────────────────┘
+```
+
+DSCR is already in the **right quadrants** in Gen 1:
+- Lifecycle/3-Year use LTM (quarterly frequency, annual window) ✓
+- Forward 12M uses Quarterly (quarterly frequency, quarterly window) ✓
+- Annual fallback only appears when monthly data is unavailable
+
+#### CFADS (numerator) in the grid
+
+```
+                         Computation frequency
+                         Annual              Quarterly          Monthly
+                    ┌────────────────────┬───────────────────┬───────────────────┐
+  Data         12mo │  Annual CFADS      │  (not used)       │  (not used)       │
+  window            │  Rev P50 − OpEx    │                   │                   │
+                    │  • DSCR table      │                   │                   │
+                    │  • loan sizing     │                   │                   │
+                    ├────────────────────┼───────────────────┼───────────────────┤
+                3mo │                    │  Quarterly CFADS  │                   │
+                    │                    │  • seasonal rev   │                   │
+                    │                    │  • flat OpEx ÷ 4  │                   │
+                    │                    │  • chart band     │                   │
+                    ├────────────────────┼───────────────────┼───────────────────┤
+                1mo │                    │                   │  Monthly CFADS    │
+                    │                    │                   │  • seasonal rev   │
+                    │                    │                   │  • flat OpEx ÷ 12 │
+                    │                    │                   │  • Forward 12M    │
+                    └────────────────────┴───────────────────┴───────────────────┘
+```
+
+CFADS frequency matches the data granularity at each level — **this is
+already correct in Gen 1.** Revenue comes from the API at monthly
+granularity and is aggregated up. The simplification is in OpEx (flat
+annual ÷ N), not in the revenue signal.
+
+| Component | Gen 1 | Gen 2 target |
+|-----------|-------|-------------|
+| Revenue | Monthly seasonal from simulation ✓ | Year-varying (degradation, PPA escalators) |
+| OpEx | Annual ÷ N (flat) | Seasonal schedule (maintenance windows, insurance lumps) |
+| CFADS | Revenue − flat OpEx | Revenue − seasonal OpEx − taxes − reserve top-ups |
+
+#### Debt Service (denominator) in the grid
+
+```
+                         Computation frequency
+                         Annual              Quarterly           Monthly
+                    ┌────────────────────┬───────────────────┬───────────────────┐
+  Accrual      12mo │  Annual DS         │  Annual ÷ 4       │  Annual ÷ 12      │
+  period            │  • source of truth │  • display only   │  • display only   │
+  (interest         │  • buildAmort()    │  • 3Y/Lifecycle   │  • Forward 12M    │
+   compound-        │                    │  • NOT true Q DS  │  • NOT true mo DS │
+   ing)             │                    │                   │                   │
+                    ├────────────────────┼───────────────────┼───────────────────┤
+                3mo │                    │  True quarterly   │                   │
+                    │                    │  • Q compounding  │                   │
+                    │                    │  • balance steps  │                   │
+                    │                    │    down intra-year│                   │
+                    │                    │  • Gen 2 target   │                   │
+                    ├────────────────────┼───────────────────┼───────────────────┤
+                1mo │                    │                   │  True monthly     │
+                    │                    │                   │  • rare in PF     │
+                    │                    │                   │  • Gen 2 optional │
+                    └────────────────────┴───────────────────┴───────────────────┘
+```
+
+**This is where Gen 1 simplifies.** DS is computed annually and divided
+down for display — it lives in the **top row** regardless of which view
+you're in. The quarterly and monthly values on screen are not true
+sub-annual debt service; they're annual ÷ 4 and annual ÷ 12.
+
+Gen 2 moves DS into the second row: true quarterly compounding where
+interest accrues on the actual quarterly balance and the balance steps
+down after each payment.
+
+#### Gen 1 vs Gen 2 — the full picture
+
+| Component | Gen 1 (current) | Gen 2 (target) | Impact of change |
+|-----------|----------------|----------------|------------------|
+| **Revenue** | Repeating 12-month seasonal pattern | Year-varying: degradation (~0.5%/yr solar), PPA escalators, merchant price curves | CFADS changes year-to-year; LTM DSCR varies within a year |
+| **OpEx** | Flat annual ÷ N | Seasonal schedule: maintenance (spring/fall), insurance (annual), land lease (quarterly) | Monthly CFADS more realistic; quarterly DSCR captures true cash timing |
+| **Interest accrual** | Annual (once per year on opening balance) | Quarterly (on actual period balance, 30/360 or ACT/365 day count) | ~2.7% more total interest at 6% over 18yr; different DS profile per quarter |
+| **Payment frequency** | Annual (÷4 or ÷12 for display) | Quarterly (actual payments reduce balance intra-year) | DS steps down 4x per year instead of once; changes DSCR shape |
+| **DSCR computation** | LTM = annual (identical in Gen 1) | LTM ≠ annual (12-month window straddles years with different revenue) | LTM DSCR slides smoothly between years instead of stepping |
+| **Covenant testing** | Single threshold, annual implicit | Dual threshold (lock-up + default), quarterly test dates | Can catch seasonal covenant breaches that annual smooths over |
+| **Reserves** | Not modeled | DSRA (6-month DS), maintenance reserve, cash sweep | Affects available cash, can trigger technical defaults even when DSCR looks fine |
+
+**The key takeaway:** In Gen 1, DSCR is in the right quadrant (LTM for
+monitoring, quarterly for seasonal) but its **denominator** (DS) is
+always annual substance. Gen 2 fixes the denominator — true quarterly DS
+with real compounding — which makes the quarterly DSCR and LTM DSCR
+genuinely different from each other and from the annual figure.
+
+**Cross-references:**
+- `docs/learning/explain_model_granularity_and_payment_frequency.md` —
+  detailed comparison of Gen 1 vs true quarterly, with $50M worked
+  example showing the $885K total interest difference over 18 years
+- `docs/learning/examples/dscr-calculations-by-view.md` — worked DSCR
+  numbers for all three views showing how the same quarter looks
+  different under quarterly vs LTM DSCR
+
 ---
 
 ## 2. CFADS — Where the Cash Flow Comes From
