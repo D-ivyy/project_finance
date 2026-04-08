@@ -399,7 +399,139 @@ Year 2:  Same (revenue is constant in Gen 1)
 The principal may not fully amortize — the closing balance might not reach
 zero. This is flagged as a validation error in the dashboard.
 
-### How DS maps to sub-annual views
+### The terms that shape Debt Service
+
+Unlike CFADS (which is just revenue minus costs), debt service depends on
+several **contractual and computational terms** that interact with each other.
+Understanding these is essential for Gen 2 and for interpreting real term sheets.
+
+#### Interest rate
+
+The annual interest rate (e.g., 5.75%) is what the borrower pays for the
+use of money. But how it's applied depends on the compounding convention:
+
+| Rate type | Definition | Example (6% annual on $100M) |
+|-----------|-----------|------------------------------|
+| **Nominal annual** | Stated rate, not adjusted for compounding | 6.00% — what appears on the term sheet |
+| **Periodic** | Nominal ÷ periods per year | Quarterly: 6% ÷ 4 = 1.50% per quarter |
+| **Effective annual** | Actual cost including compounding | Quarterly compounding: (1.015)⁴ − 1 = 6.136% |
+
+In Gen 1 we use the nominal annual rate applied once per year. In Gen 2
+with quarterly payments, the periodic rate (nominal ÷ 4) would be applied
+each quarter, producing a slightly higher effective annual rate.
+
+#### Compounding frequency
+
+How often interest is calculated and added to the accrual:
+
+```
+Same $100M loan at 6% nominal:
+
+Annual compounding:     $100M × 6.000% = $6,000,000 interest in Year 1
+Quarterly compounding:  $100M × 1.5% × 4 quarters = $6,045,339 (slightly more)
+Monthly compounding:    $100M × 0.5% × 12 months  = $6,167,781 (more still)
+```
+
+The difference seems small per year but compounds over an 18-year tenor —
+quarterly compounding adds ~$885K in total interest vs annual on a $50M
+loan at 6% (see `explain_model_granularity_and_payment_frequency.md`).
+
+#### Payment frequency
+
+How often the borrower actually makes a debt service payment:
+
+| Frequency | Common in | Effect |
+|-----------|-----------|--------|
+| **Annual** | Some international deals; our Gen 1 model | Balance stays high all year; more interest accrues |
+| **Semi-annual** | Many US project finance term loans | Two step-downs per year in balance |
+| **Quarterly** | Most common in project finance globally | Balance reduces 4x/year; less total interest |
+| **Monthly** | Rare in project finance (more common in corporate/mortgage) | Finest granularity; lowest total interest |
+
+Payment frequency matters because each payment reduces the outstanding
+balance, which reduces the interest calculated in the next period. More
+frequent payments = less total interest over the life of the loan.
+
+#### Day count convention
+
+How "days" in a period are counted for interest calculation:
+
+| Convention | How it works | Used by |
+|-----------|-------------|---------|
+| **30/360** | Every month has 30 days, year has 360 | Most US fixed-rate project finance |
+| **ACT/365** | Actual calendar days, 365-day year | UK, Australia, some floating-rate |
+| **ACT/360** | Actual calendar days, 360-day year | SOFR/LIBOR-based floating rate |
+
+Not implemented in our model — we use simple annual division. But it
+matters in real deals: a quarterly interest payment on ACT/360 for a
+92-day quarter (Q1) vs a 91-day quarter (Q3) produces different amounts.
+
+#### Outstanding balance
+
+The principal balance at any point determines the interest for the next
+period. In Gen 1, the balance steps down once per year (after the annual
+payment). With true quarterly payments, the balance steps down four times:
+
+```
+Gen 1 (annual):
+  ────────────────────────────────── $213.0M (all year)
+                                    ↓ annual payment
+  ────────────────────────────────── $201.2M (all next year)
+
+Gen 2 (quarterly):
+  ──────────── $213.0M
+              ↓ Q1 payment
+  ──────────── $210.0M
+              ↓ Q2 payment
+  ──────────── $207.0M
+              ↓ Q3 payment
+  ──────────── $204.0M
+              ↓ Q4 payment
+  ──────────── $201.0M
+```
+
+Each step-down means less interest in the next period. This is why true
+quarterly DS isn't just annual ÷ 4 — the interest component changes
+within the year as the balance reduces.
+
+### Why CFADS can be aggregated but DS cannot
+
+This is the fundamental asymmetry:
+
+**CFADS (numerator):** Revenue is observed at monthly granularity. Going
+from monthly to quarterly is simple summation — add three months of cash
+flow. Going from monthly to annual is the same: add twelve months. The
+data exists at the finest level and aggregates upward naturally.
+
+```
+Monthly CFADS:   $1.2M + $1.5M + $1.8M = $4.5M quarterly CFADS  ✓
+                 (sum is always valid)
+```
+
+**DS (denominator):** Debt service is *computed* from loan terms, and
+the computation changes depending on the frequency. Annual DS ÷ 4 does
+NOT equal the true quarterly DS because:
+
+1. **Interest changes intra-year** — after Q1 payment reduces the balance,
+   Q2 interest is on a lower balance
+2. **Compounding differs** — quarterly rate compounds differently than
+   annual rate applied once
+3. **Payment timing affects balance** — paying $6M in Q1 vs $24M at
+   year-end changes how much interest accrues
+
+```
+Annual DS ÷ 4:   $24.08M ÷ 4 = $6.02M per quarter  (our Gen 1)
+True Q1 DS:      $213M × 1.4375% + $213M/72 = $3.06M + $2.96M = $6.02M
+True Q4 DS:      $204M × 1.4375% + $213M/72 = $2.93M + $2.96M = $5.89M  ← different
+                 (balance shrank after Q1-Q3 payments)
+```
+
+The gap is small in any single quarter but accumulates over 18 years.
+More importantly, it means the quarterly DSCR profile is slightly
+different from what annual ÷ 4 shows — Q4 has lower DS (easier to
+service) than Q1, which matters for seasonal assets like solar where Q4
+revenue is also low.
+
+### How DS maps to sub-annual views (Gen 1)
 
 In Gen 1, debt service is **computed annually** then divided down for display:
 
@@ -411,7 +543,8 @@ Monthly view:    $24.08M ÷ 12 = $2.01M per month
 ```
 
 This is a simplification — real loans pay quarterly or semi-annually with
-true compounding (see `explain_model_granularity_and_payment_frequency.md`).
+true compounding. For a detailed numerical comparison of Gen 1 vs true
+quarterly, see `explain_model_granularity_and_payment_frequency.md`.
 
 ### Debt Service on the chart
 
@@ -420,6 +553,16 @@ stepping down at year boundaries for level_principal). The CFADS band
 undulates seasonally above or below this line — where the band is above DS,
 the project is generating more cash than it owes; where it dips below, it's
 in deficit for that period.
+
+### Cross-references
+
+- `docs/cashflow_dscr_methodology.md` §3–§4 — full loan math: principal,
+  interest, amortization formulas, worked examples for all three types
+- `docs/learning/explain_model_granularity_and_payment_frequency.md` —
+  Gen 1 vs true quarterly comparison with numerical impact ($885K
+  difference over 18 years at 6%)
+- `docs/learning/explain_default_loan_sizing.md` — how the dashboard
+  picks default principal, rate, and tenor from asset metadata
 
 ---
 
