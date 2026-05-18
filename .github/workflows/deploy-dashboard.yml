@@ -22,6 +22,7 @@ jobs:
       with:
         project_id: 'modeling-nonprod-svc-db5x'
         workload_identity_provider: 'projects/952205173464/locations/global/workloadIdentityPools/infrasure-gh-actions-pool/providers/github-repo-provider'
+        service_account: 'gh-actions-deploy@modeling-nonprod-svc-db5x.iam.gserviceaccount.com'
 
     - name: Set up Cloud SDK
       uses: 'google-github-actions/setup-gcloud@v3'
@@ -41,9 +42,20 @@ jobs:
           --image us-central1-docker.pkg.dev/modeling-nonprod-svc-db5x/infrasuremodelingdocker/project_finance:${{ github.sha }} \
           --platform managed \
           --region us-central1 \
-          --allow-unauthenticated \
+          --iap \
+          --no-allow-unauthenticated \
           --service-account project-service-account@modeling-nonprod-svc-db5x.iam.gserviceaccount.com \
           --set-env-vars="DELIVERY_BUCKET=${{ secrets.DELIVERY_BUCKET }},ACCESS_KEY=${{ secrets.ACCESS_KEY }},SECRET=${{ secrets.SECRET }}"
+
+    - name: Grant IAP access to aamani.ai domain
+      run: |
+        gcloud iap web add-iam-policy-binding \
+          --resource-type=cloud-run \
+          --service=project-finance \
+          --region=us-central1 \
+          --member='domain:aamani.ai' \
+          --role='roles/iap.httpsResourceAccessor' \
+          --condition=None
 
 
 
