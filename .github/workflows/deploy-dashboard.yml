@@ -49,10 +49,13 @@ jobs:
 
     - name: Grant IAP access to aamani.ai domain
       run: |
-        gcloud run services add-iam-policy-binding project-finance \
+        gcloud iap web add-iam-policy-binding \
+          --resource-type=cloud-run \
+          --service=project-finance \
           --region=us-central1 \
           --member='domain:aamani.ai' \
-          --role='roles/iap.httpsResourceAccessor'
+          --role='roles/iap.httpsResourceAccessor' \
+          --condition=None
 
 
 
